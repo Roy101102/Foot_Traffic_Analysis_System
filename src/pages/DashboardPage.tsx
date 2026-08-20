@@ -12,6 +12,7 @@ import { useDashboard } from "../context/DashboardContext";
 // ==========================================
 
 // 📊 BASELINE PROFILE: Represents a realistic distribution across a standard MR.DIY business day
+/*
 export const BUSINESS_DAY_MOCK_TRENDS = [
   { hour: 8, entries: 14, exits: 4, customers: 1 },
   { hour: 9, entries: 32, exits: 18, customers: 5 },
@@ -33,97 +34,27 @@ export const BUSINESS_DAY_MOCK_TRENDS = [
 const INITIAL_TOTAL_ENTRIES = BUSINESS_DAY_MOCK_TRENDS.reduce((sum, item) => sum + item.entries, 0);
 const INITIAL_TOTAL_EXITS = BUSINESS_DAY_MOCK_TRENDS.reduce((sum, item) => sum + item.exits, 0);
 const INITIAL_TOTAL_CUSTOMERS = BUSINESS_DAY_MOCK_TRENDS.reduce((sum, item) => sum + (item.customers ?? 0), 0);
-
-interface LiveData {
-  summary: {
-    total_entries: number;
-    total_exits: number;
-    current_occupancy: number;
-  };
-  hourly_trends: Array<{
-    hour: number;
-    entries: number;
-    exits: number;
-    customers?: number; 
-  }>;
-}
+*/
 
 // ==========================================
 // 🔵 MAIN INTERFACE VIEW LAYER
 // ==========================================
 export default function DashboardPage() {
-  const { updateData } = useDashboard();
-
-  // Hydrate state with mock data immediately so charts display data on initial render
-  const [liveStats, setLiveStats] = useState<LiveData>({
-    summary: {
-      total_entries: INITIAL_TOTAL_ENTRIES,
-      total_exits: INITIAL_TOTAL_EXITS,
-      current_occupancy: Math.max(0, INITIAL_TOTAL_ENTRIES - INITIAL_TOTAL_EXITS)
-    },
-    hourly_trends: BUSINESS_DAY_MOCK_TRENDS
-  });
+  const { updateData, liveTraffic } = useDashboard();
 
   // Track manual manager POS entries safely - starting with our mock customer count
-  const [salesInput, setSalesInput] = useState<string>(INITIAL_TOTAL_CUSTOMERS.toString());
-  const [confirmedCustomers, setConfirmedCustomers] = useState<number>(INITIAL_TOTAL_CUSTOMERS);
+  const [salesInput, setSalesInput] = useState("0");
+  const [confirmedCustomers, setConfirmedCustomers] = useState(0);
   const [isConfirming, setIsConfirming] = useState<boolean>(false);
   const [pendingValue, setPendingValue] = useState<number>(0);
   
   // Validation error feedback tracker
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Active Live API polling block connecting to your backend/XAMPP dataset
-  useEffect(() => {
-    function fetchUpdates() {
-      fetch("http://127.0.0.1:8000/api/dashboard-stats")
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.status === "success") {
-            const currentHour = new Date().getHours();
-            
-            // Sum previous entries to keep totals accurate with live data additions
-            const simulatedPreviousEntries = BUSINESS_DAY_MOCK_TRENDS
-              .filter(item => item.hour < currentHour)
-              .reduce((sum, item) => sum + item.entries, 0);
-
-            const updatedTrends = BUSINESS_DAY_MOCK_TRENDS.map((item) => {
-              if (item.hour === currentHour) {
-                return {
-                  ...item,
-                  // Combine baseline mock traffic with real-time video increments
-                  entries: item.entries + data.summary.total_entries,
-                  exits: item.exits + data.summary.total_exits,
-                  customers: (item.customers ?? 0) + confirmedCustomers
-                };
-              }
-              return item;
-            });
-
-            setLiveStats({
-              summary: {
-                total_entries: simulatedPreviousEntries + data.summary.total_entries,
-                total_exits: data.summary.total_exits, 
-                current_occupancy: data.summary.current_occupancy
-              },
-              hourly_trends: updatedTrends
-            });
-          }
-        })
-        .catch((err) => {
-          console.warn("📡 API offline, displaying baseline mock trends instead:", err);
-        });
-    }
-
-    fetchUpdates();
-    const networkInterval = setInterval(fetchUpdates, 3000);
-    return () => clearInterval(networkInterval);
-  }, [confirmedCustomers]);
-
   // Read data values cleanly without optional chaining checks
-  const totalEntries = liveStats.summary.total_entries;
-  const totalExits = liveStats.summary.total_exits;
-  const occupancy = liveStats.summary.current_occupancy;
+  const totalEntries = liveTraffic.summary.total_entries;
+  const totalExits = liveTraffic.summary.total_exits;
+  const occupancy = liveTraffic.summary.current_occupancy;
 
   // 🧮 TRUE RETAIL MATHEMATICS: Compute conversion accurately relative to manual POS logs
   const conversionRate = totalEntries > 0 
@@ -139,7 +70,7 @@ export default function DashboardPage() {
     const avgSpend = 18.5; // Average transaction value baseline
     const totalSales = confirmedCustomers * avgSpend;
 
-    const hourlyConversion = liveStats.hourly_trends.map((item) => {
+    const hourlyConversion = liveTraffic.hourly_trends.map((item) => {
       const hrsVisitors = item.entries;
       const hrsCustomers = item.customers ?? Math.round(item.entries * (conversionRate / 100));
       const hrsRate = hrsVisitors > 0 ? parseFloat(((hrsCustomers / hrsVisitors) * 100).toFixed(1)) : 0;
@@ -171,10 +102,10 @@ export default function DashboardPage() {
         { time: "Sun", visitors: totalEntries, customers: confirmedCustomers, sales: totalSales }
       ]
     });
-  }, [totalEntries, confirmedCustomers, conversionRate, liveStats.hourly_trends, updateData]);
+  }, [totalEntries, confirmedCustomers, conversionRate, liveTraffic.hourly_trends, updateData]);
 
   // Transform baseline hourly arrays cleanly for the Entry/Exit chart
-  const dynamicEntryExitData = liveStats.hourly_trends.map((item) => ({
+  const dynamicEntryExitData = liveTraffic.hourly_trends.map((item) => ({
     time: `${item.hour.toString().padStart(2, "0")}:00`,
     entry: item.entries,
     exit: item.exits,
@@ -182,7 +113,7 @@ export default function DashboardPage() {
 
   // OPTION 2 CALCULATION: Compute dynamic in-store occupancy trend line based on camera traffic flow
   let cumulativeOccupancy = 0;
-  const dynamicHourlyData = liveStats.hourly_trends.map((item) => {
+  const dynamicHourlyData = liveTraffic.hourly_trends.map((item) => {
     cumulativeOccupancy += (item.entries - item.exits);
     const currentHourOccupancy = Math.max(0, cumulativeOccupancy);
 
@@ -211,25 +142,30 @@ export default function DashboardPage() {
   ];
 
   const dynamicHeatmapData = daysConfig.map((day) => {
-    const isToday = day.name === todayName;
-    // Today's row reads directly from the live, updating React state
-    const sourceTrends = isToday ? liveStats.hourly_trends : BUSINESS_DAY_MOCK_TRENDS;
-    const currentOffset = isToday ? 0 : day.offset;
+  const isToday = day.name === todayName;
 
-    return {
-      day: day.name,
-      hours: heatmapHours.map((hour) => {
-        const firstHourEntries = sourceTrends.find((item) => item.hour === hour)?.entries ?? 0;
-        const secondHourEntries = sourceTrends.find((item) => item.hour === hour + 1)?.entries ?? 0;
-        const combinedTotal = firstHourEntries + secondHourEntries;
+  const sourceTrends = isToday
+    ? liveTraffic.hourly_trends
+    : [];
 
-        return {
-          hour: `${hour.toString().padStart(2, "0")}:00`,
-          value: combinedTotal > 0 ? Math.max(0, combinedTotal + currentOffset) : 0,
-        };
-      }),
-    };
-  });
+  return {
+    day: day.name,
+    hours: heatmapHours.map((hour) => {
+      const firstHourEntries =
+        sourceTrends.find((item) => item.hour === hour)?.entries ?? 0;
+
+      const secondHourEntries =
+        sourceTrends.find((item) => item.hour === hour + 1)?.entries ?? 0;
+
+      const combinedTotal = firstHourEntries + secondHourEntries;
+
+      return {
+        hour: `${hour.toString().padStart(2, "0")}:00`,
+        value: combinedTotal,
+      };
+    }),
+  };
+});
 
   // FIXED STABLE HISTORICAL CONVERSION: Past days are locked down completely, today calculates dynamically
   const conversionTrendData = [
