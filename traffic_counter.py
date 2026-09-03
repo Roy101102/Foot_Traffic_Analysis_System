@@ -1,6 +1,11 @@
+import os
 import cv2
+import urllib.parse
 import requests
 from ultralytics import YOLO
+
+# Force OpenCV to use TCP transport for RTSP to prevent gray/corrupted frames
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 
 # ============================================================
@@ -53,15 +58,22 @@ model = YOLO("yolov8n.pt")
 
 
 # ============================================================
-# 2. VIDEO SOURCE
+# 2. VIDEO SOURCE (HIKVISION RTSP CAMERA STREAM)
 # ============================================================
 
-VIDEO_SOURCE = "sample.mp4"
+CAMERA_IP   = "172.16.64.5"          # Update to IP shown in SADP       
+CAMERA_USER = "admin"
+CAMERA_PASS = "Group5Bayawan" # <--- REPLACE WITH YOUR ACTUAL PASSWORD
+CHANNEL     = "102"                  # 102 = Sub-stream (Optimal for AI speed)
+
+# Safely encode special characters (@, #, $, etc.) in the password
+encoded_pass = urllib.parse.quote_plus(CAMERA_PASS)
+VIDEO_SOURCE = f"rtsp://{CAMERA_USER}:{encoded_pass}@{CAMERA_IP}:554/Streaming/Channels/{CHANNEL}"
 
 cap = cv2.VideoCapture(VIDEO_SOURCE)
 
-if not cap.isOpened():
-    print("❌ Unable to open video source.")
+if not cap.isOpened(): 
+    print("❌ Unable to open video source. Check IP, credentials, or network connection.")
     exit(1)
 
 
@@ -80,23 +92,12 @@ exit_count = 0
 # ============================================================
 
 # Stores the previous Y-coordinate of each tracked person.
-# Example:
-# {
-#     12: 280,
-#     15: 350
-# }
 track_history = {}
-
 
 # Counts how many consecutive frames an ID has been detected.
 track_frame_counters = {}
 
-
 # Prevents the same tracking ID from being counted repeatedly.
-# Example:
-# {
-#     12: {"crossed": True}
-# }
 track_states = {}
 
 
@@ -108,6 +109,7 @@ print("============================================================")
 print("MR. DIY FOOT TRAFFIC ANALYSIS SYSTEM")
 print("============================================================")
 print(f"FastAPI Backend: {API_URL}")
+print(f"RTSP Stream:     {VIDEO_SOURCE}")
 print("Press 'q' to stop the detection.")
 print("============================================================")
 
@@ -189,11 +191,8 @@ while cap.isOpened():
             # =================================================
 
             if track_id not in track_frame_counters:
-
                 track_frame_counters[track_id] = 1
-
             else:
-
                 track_frame_counters[track_id] += 1
 
 
@@ -202,7 +201,6 @@ while cap.isOpened():
             # =================================================
 
             if track_frame_counters[track_id] > 2:
-
 
                 # =============================================
                 # DRAW TRACKING BOX
@@ -250,7 +248,6 @@ while cap.isOpened():
                 # =============================================
 
                 if track_id not in track_states:
-
                     track_states[track_id] = {
                         "crossed": False
                     }
@@ -285,20 +282,13 @@ while cap.isOpened():
                         ):
 
                             entry_count += 1
-
                             track_states[track_id]["crossed"] = True
-
 
                             print(
                                 f"🟢 [ENTRY] "
                                 f"Person ID {track_id} entered. "
                                 f"Total Entries: {entry_count}"
                             )
-
-
-                            # =================================
-                            # SEND TO FASTAPI
-                            # =================================
 
                             log_to_backend(
                                 direction="ENTRY",
@@ -319,20 +309,13 @@ while cap.isOpened():
                         ):
 
                             exit_count += 1
-
                             track_states[track_id]["crossed"] = True
-
 
                             print(
                                 f"🔴 [EXIT] "
                                 f"Person ID {track_id} exited. "
                                 f"Total Exits: {exit_count}"
                             )
-
-
-                            # =================================
-                            # SEND TO FASTAPI
-                            # =================================
 
                             log_to_backend(
                                 direction="EXIT",
@@ -361,7 +344,6 @@ while cap.isOpened():
         2
     )
 
-
     cv2.putText(
         frame,
         f"Exits: {exit_count}",
@@ -371,7 +353,6 @@ while cap.isOpened():
         (0, 0, 255),
         2
     )
-
 
     cv2.putText(
         frame,
@@ -407,7 +388,6 @@ while cap.isOpened():
 # ============================================================
 
 cap.release()
-
 cv2.destroyAllWindows()
 
 print("============================================================")
