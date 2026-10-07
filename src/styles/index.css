@@ -1,0 +1,15 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+/* Force dark mode for analytics dashboard */
+html {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  background-color: #0f172a;
+  color: #e2e8f0;
+}
