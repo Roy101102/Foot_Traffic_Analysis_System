@@ -59,18 +59,31 @@ export function CameraCard({
 }: CameraCardProps) {
   const [timestamp, setTimestamp] = useState<string>("");
   const [streamError, setStreamError] = useState<boolean>(false);
+  const [retryKey, setRetryKey] = useState<number>(0);
 
   // Feed is active ONLY when device is online AND streaming is enabled
   const isFeedActive = isOnline && isStreaming;
 
-  // FastAPI default stream URL endpoint matching backend camera ID
-  const activeStreamUrl = streamUrl || `http://127.0.0.1:8000/api/video_feed/${id}`;
-  const isVideoFile = activeStreamUrl.endsWith(".mp4") || activeStreamUrl.endsWith(".webm");
+  // FastAPI / OpenCV MJPEG stream URL endpoint matching backend camera ID
+  const rawStreamUrl = streamUrl || `http://127.0.0.1:8000/api/video_feed/${id}`;
+  
+  // Attach cache buster on retries to force new connection to FastAPI/Flask server
+  const activeStreamUrl = retryKey > 0 
+    ? `${rawStreamUrl}${rawStreamUrl.includes("?") ? "&" : "?"}_t=${retryKey}` 
+    : rawStreamUrl;
 
-  // Reset error state when active URL or streaming status changes
+  const isVideoFile = activeStreamUrl.toLowerCase().includes(".mp4") || activeStreamUrl.toLowerCase().includes(".webm");
+
+  // Reset error state when active URL, streaming, or network status changes
   useEffect(() => {
     setStreamError(false);
-  }, [activeStreamUrl, isStreaming, isOnline]);
+  }, [rawStreamUrl, isStreaming, isOnline]);
+
+  // Handle stream retry connection
+  const handleRetryStream = () => {
+    setStreamError(false);
+    setRetryKey((prev) => prev + 1);
+  };
 
   // Real-time CCTV clock overlay
   useEffect(() => {
@@ -211,9 +224,9 @@ export function CameraCard({
               <div className="flex flex-col items-center justify-center text-center p-4 text-amber-400">
                 <AlertCircle className="h-10 w-10 text-amber-500/80 mb-2" />
                 <p className="text-xs font-mono text-amber-300">STREAM UNAVAILABLE</p>
-                <p className="text-[10px] text-slate-400 mt-1 mb-3">Check if Python backend is running</p>
+                <p className="text-[10px] text-slate-400 mt-1 mb-3">Check if backend video feed is active</p>
                 <Button 
-                  onClick={() => setStreamError(false)} 
+                  onClick={handleRetryStream} 
                   variant="outline" 
                   size="sm" 
                   className="border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800 text-xs h-7 px-3"
@@ -223,10 +236,11 @@ export function CameraCard({
                 </Button>
               </div>
             ) : (
-              /* State 4: Active Video Stream Running */
+              /* State 4: Active Live Stream Running */
               <>
                 {isVideoFile ? (
                   <video
+                    key={`video-${id}-${retryKey}`}
                     src={activeStreamUrl}
                     autoPlay
                     loop
@@ -237,6 +251,7 @@ export function CameraCard({
                   />
                 ) : (
                   <img
+                    key={`stream-${id}-${retryKey}`}
                     src={activeStreamUrl}
                     alt={name}
                     className="w-full h-full object-cover"

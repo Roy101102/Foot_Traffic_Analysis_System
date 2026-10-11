@@ -30,44 +30,46 @@ export function TrafficChart({ title, data, type = "line", dataKeys }: TrafficCh
 
   return (
     <Card className="bg-slate-800/50 border-slate-700">
-      <CardHeader>
+      <CardHeader className="pb-2">
         <CardTitle className="text-white">{title}</CardTitle>
       </CardHeader>
-      <CardContent>
-        <ResponsiveContainer width="100%" height={300}>
-          {type === "line" ? (
-            <LineChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-              <XAxis dataKey="time" stroke="#94a3b8" style={{ fontSize: "12px" }} />
-              <YAxis stroke="#94a3b8" style={{ fontSize: "12px" }} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend wrapperStyle={{ color: "#94a3b8" }} />
-              {dataKeys.map((item) => (
-                <Line
-                  key={item.key}
-                  type="monotone"
-                  dataKey={item.key}
-                  stroke={item.color}
-                  name={item.name}
-                  strokeWidth={2}
-                  dot={{ fill: item.color, r: 4 }}
-                  activeDot={{ r: 6 }}
-                />
-              ))}
-            </LineChart>
-          ) : (
-            <BarChart data={data}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-              <XAxis dataKey="time" stroke="#94a3b8" style={{ fontSize: "12px" }} />
-              <YAxis stroke="#94a3b8" style={{ fontSize: "12px" }} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend wrapperStyle={{ color: "#94a3b8" }} />
-              {dataKeys.map((item) => (
-                <Bar key={item.key} dataKey={item.key} fill={item.color} name={item.name} radius={[4, 4, 0, 0]} />
-              ))}
-            </BarChart>
-          )}
-        </ResponsiveContainer>
+      <CardContent className="pt-2">
+        <div className="w-full h-[280px]">
+          <ResponsiveContainer width="100%" height="100%">
+            {type === "line" ? (
+              <LineChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey="time" stroke="#94a3b8" style={{ fontSize: "12px" }} />
+                <YAxis stroke="#94a3b8" style={{ fontSize: "12px" }} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ color: "#94a3b8", paddingTop: "12px" }} />
+                {dataKeys.map((item) => (
+                  <Line
+                    key={item.key}
+                    type="monotone"
+                    dataKey={item.key}
+                    stroke={item.color}
+                    name={item.name}
+                    strokeWidth={2}
+                    dot={{ fill: item.color, r: 4 }}
+                    activeDot={{ r: 6 }}
+                  />
+                ))}
+              </LineChart>
+            ) : (
+              <BarChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey="time" stroke="#94a3b8" style={{ fontSize: "12px" }} />
+                <YAxis stroke="#94a3b8" style={{ fontSize: "12px" }} />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend wrapperStyle={{ color: "#94a3b8", paddingTop: "12px" }} />
+                {dataKeys.map((item) => (
+                  <Bar key={item.key} dataKey={item.key} fill={item.color} name={item.name} radius={[4, 4, 0, 0]} />
+                ))}
+              </BarChart>
+            )}
+          </ResponsiveContainer>
+        </div>
       </CardContent>
     </Card>
   );

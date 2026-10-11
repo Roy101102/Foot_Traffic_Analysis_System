@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CameraCard } from "../components/CameraCard";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Search, Plus, Filter, Video, X, Layers, Settings2 } from "lucide-react";
+import { Search, Plus, Filter, Video, X, Layers, Sliders } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import { useDashboard } from "../context/DashboardContext";
 
 interface CameraItem {
   id: string;
@@ -20,247 +21,289 @@ interface CameraItem {
   exitCount: number;
   isOnline: boolean;
   isStreaming: boolean;
-  streamSource: string;
-  connectionType: string;
-  modelWeight: string;
+  ip: string;
+  user?: string;
+  pass?: string;
+  channel?: string;
+  lineY: number;
+  streamUrl?: string;
 }
 
 export default function CamerasPage() {
-  // Move static data into local state so we can mutate it upon form submission
+  const { liveTraffic } = useDashboard();
+
+  // Primary MR. DIY store cameras matching traffic_counter.py
   const [cameras, setCameras] = useState<CameraItem[]>([
-    { id: "cam_1", name: "Front Entrance", location: "Main Floor - Zone A", liveCount: 12, entryCount: 234, exitCount: 198, isOnline: true, isStreaming: true, streamSource: "rtsp://192.168.1.50/stream1", connectionType: "RTSP", modelWeight: "yolov8n.pt" },
-    { id: "cam_2", name: "Back Entrance", location: "Main Floor - Zone B", liveCount: 5, entryCount: 89, exitCount: 76, isOnline: true, isStreaming: true, streamSource: "rtsp://192.168.1.51/stream1", connectionType: "RTSP", modelWeight: "yolov8n.pt" },
-    { id: "cam_3", name: "West Wing", location: "2nd Floor - Zone C", liveCount: 8, entryCount: 156, exitCount: 142, isOnline: true, isStreaming: true, streamSource: "rtsp://192.168.1.52/stream1", connectionType: "RTSP", modelWeight: "yolov8s.pt" },
-    { id: "cam_4", name: "East Wing", location: "2nd Floor - Zone D", liveCount: 0, entryCount: 67, exitCount: 71, isOnline: false, isStreaming: false, streamSource: "rtsp://192.168.1.53/stream1", connectionType: "RTSP", modelWeight: "yolov8n.pt" },
-    { id: "cam_5", name: "North Corridor", location: "Main Floor - Zone E", liveCount: 6, entryCount: 124, exitCount: 118, isOnline: true, isStreaming: true, streamSource: "0", connectionType: "Webcam", modelWeight: "yolov8n.pt" },
-    { id: "cam_6", name: "South Corridor", location: "Main Floor - Zone F", liveCount: 9, entryCount: 178, exitCount: 165, isOnline: true, isStreaming: true, streamSource: "videos/south.mp4", connectionType: "File", modelWeight: "yolov8m.pt" },
-    { id: "cam_7", name: "Parking Entrance", location: "Ground Floor - Zone G", liveCount: 15, entryCount: 298, exitCount: 276, isOnline: true, isStreaming: true, streamSource: "rtsp://192.168.1.55/stream1", connectionType: "RTSP", modelWeight: "yolov8s.pt" },
-    { id: "cam_8", name: "Emergency Exit", location: "Ground Floor - Zone H", liveCount: 0, entryCount: 12, exitCount: 14, isOnline: false, isStreaming: false, streamSource: "rtsp://192.168.1.56/stream1", connectionType: "RTSP", modelWeight: "yolov8n.pt" },
+    { 
+      id: "cam_1", 
+      name: "Zone 1: Main Entrance Gate", 
+      location: "Main Floor - Entrance", 
+      liveCount: 0, 
+      entryCount: 0, 
+      exitCount: 0, 
+      isOnline: true, 
+      isStreaming: true, 
+      ip: "192.168.1.51",
+      user: "admin",
+      pass: "Group5Bayawan",
+      channel: "102",
+      lineY: 300,
+      streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_1"
+    },
+    { 
+      id: "cam_2", 
+      name: "Zone 2: Hardware & Tools Aisle", 
+      location: "Main Floor - Aisle 1", 
+      liveCount: 0, 
+      entryCount: 0, 
+      exitCount: 0, 
+      isOnline: true, 
+      isStreaming: true, 
+      ip: "192.168.1.52",
+      user: "admin",
+      pass: "Group5Bayawan",
+      channel: "102",
+      lineY: 300,
+      streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_2"
+    },
+    { 
+      id: "cam_3", 
+      name: "Zone 3: Household & Electrical Aisle", 
+      location: "Main Floor - Aisle 2", 
+      liveCount: 0, 
+      entryCount: 0, 
+      exitCount: 0, 
+      isOnline: true, 
+      isStreaming: true, 
+      ip: "192.168.1.53",
+      user: "admin",
+      pass: "Group5Bayawan",
+      channel: "102",
+      lineY: 300,
+      streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_3"
+    },
   ]);
 
-  // Modal Dialog and Input States
+  // Sync telemetry from dashboard_api (Port 8000)
+  useEffect(() => {
+    if (!liveTraffic?.cameras || liveTraffic.cameras.length === 0) return;
+
+    setCameras((prev) =>
+      prev.map((cam) => {
+        const matchedBackend = liveTraffic.cameras.find(
+          (bCam: any) => bCam.id === cam.id || bCam.name === cam.name
+        );
+
+        if (matchedBackend) {
+          return {
+            ...cam,
+            isOnline: matchedBackend.isOnline ?? matchedBackend.is_online ?? true,
+            liveCount: matchedBackend.liveCount ?? matchedBackend.detected ?? cam.liveCount,
+            entryCount: matchedBackend.entryCount ?? matchedBackend.entries ?? cam.entryCount,
+            exitCount: matchedBackend.exitCount ?? matchedBackend.exits ?? cam.exitCount,
+            streamUrl: matchedBackend.streamUrl || `http://127.0.0.1:8001/api/video_feed/${cam.id}`,
+          };
+        }
+        return cam;
+      })
+    );
+  }, [liveTraffic]);
+
+  // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [zoneFilter, setZoneFilter] = useState("all-zones");
 
-  // Form Field Tracking States
-  const [newCamName, setNewCamName] = useState("");
-  const [newCamLocation, setNewCamLocation] = useState("");
-  const [connectionType, setConnectionType] = useState("RTSP");
-  const [streamSource, setStreamSource] = useState("");
-  const [modelWeight, setModelWeight] = useState("yolov8n.pt");
+  // Practical Camera Form Fields
+  const [camName, setCamName] = useState("");
+  const [camIp, setCamIp] = useState("");
+  const [camUser, setCamUser] = useState("admin");
+  const [camPass, setCamPass] = useState("Group5Bayawan");
+  const [camChannel, setCamChannel] = useState("102");
+  const [camLineY, setCamLineY] = useState(300);
   const [formError, setFormError] = useState("");
 
-  // Handle Form Submission
   const handleAddCameraSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
 
-    if (!newCamName.trim() || !newCamLocation.trim() || !streamSource.trim()) {
-      setFormError("All fields are strictly required to register a video channel pipeline.");
-      return;
-    }
-
-    // Check duplicate names
-    if (cameras.some((c) => c.name.toLowerCase() === newCamName.trim().toLowerCase())) {
-      setFormError("A camera channel with this specific name is already registered.");
+    if (!camName.trim() || !camIp.trim()) {
+      setFormError("Camera Name and IP Address are required.");
       return;
     }
 
     const newId = `cam_${Date.now()}`;
-    const uniqueNewCamera: CameraItem = {
+    const newCam: CameraItem = {
       id: newId,
-      name: newCamName.trim(),
-      location: newCamLocation.trim(),
+      name: camName.trim(),
+      location: `Zone: ${camName.trim()}`,
       liveCount: 0,
       entryCount: 0,
       exitCount: 0,
       isOnline: true,
       isStreaming: true,
-      streamSource: streamSource.trim(),
-      connectionType,
-      modelWeight,
+      ip: camIp.trim(),
+      user: camUser,
+      pass: camPass,
+      channel: camChannel,
+      lineY: Number(camLineY) || 300,
+      streamUrl: `http://127.0.0.1:8001/api/video_feed/${newId}`,
     };
 
-    setCameras([...cameras, uniqueNewCamera]);
+    setCameras([...cameras, newCam]);
     setIsModalOpen(false);
-    setNewCamName("");
-    setNewCamLocation("");
-    setStreamSource("");
-    setConnectionType("RTSP");
-    setModelWeight("yolov8n.pt");
+    setCamName("");
+    setCamIp("");
   };
 
-  // Live filter computation logic
   const filteredCameras = cameras.filter((cam) => {
     const matchesSearch =
       cam.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      cam.location.toLowerCase().includes(searchQuery.toLowerCase());
+      cam.ip.toLowerCase().includes(searchQuery.toLowerCase());
+
     const matchesStatus =
       statusFilter === "all" ||
       (statusFilter === "online" && cam.isOnline) ||
       (statusFilter === "offline" && !cam.isOnline);
 
-    let matchesZone = true;
-    if (zoneFilter === "main") matchesZone = cam.location.toLowerCase().includes("main floor");
-    if (zoneFilter === "2nd") matchesZone = cam.location.toLowerCase().includes("2nd floor");
-    if (zoneFilter === "ground") matchesZone = cam.location.toLowerCase().includes("ground floor");
-
-    return matchesSearch && matchesStatus && matchesZone;
+    return matchesSearch && matchesStatus;
   });
 
-  // Toggle Streaming State
-  const toggleCameraStream = (cameraId: string) => {
+  const toggleCameraStream = (id: string) => {
     setCameras((prev) =>
-      prev.map((cam) =>
-        cam.id === cameraId ? { ...cam, isStreaming: !cam.isStreaming } : cam
-      )
+      prev.map((c) => (c.id === id ? { ...c, isStreaming: !c.isStreaming } : c))
     );
   };
 
-  // Zero-out counts
-  const resetCameraCounts = (cameraName: string) => {
-    if (confirm(`Are you sure you want to reset entry/exit metrics for ${cameraName}?`)) {
+  const resetCameraCounts = (name: string) => {
+    if (confirm(`Reset counter metrics for ${name}?`)) {
       setCameras((prev) =>
-        prev.map((cam) =>
-          cam.name === cameraName ? { ...cam, entryCount: 0, exitCount: 0, liveCount: 0 } : cam
-        )
+        prev.map((c) => (c.name === name ? { ...c, entryCount: 0, exitCount: 0, liveCount: 0 } : c))
       );
     }
   };
 
-  // Delete camera out of state completely
-  const deleteCameraPipeline = (cameraName: string) => {
-    if (confirm(`Permanently drop tracking pipeline for ${cameraName}?`)) {
-      setCameras((prev) => prev.filter((cam) => cam.name !== cameraName));
+  const deleteCameraPipeline = (name: string) => {
+    if (confirm(`Delete camera feed ${name}?`)) {
+      setCameras((prev) => prev.filter((c) => c.name !== name));
     }
   };
 
   return (
     <div className="space-y-6 relative">
-      {/* ADD CAMERA MODAL POPUP DIALOG */}
+      
+      {/* PRACTICAL ADD CAMERA MODAL */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between p-5 border-b border-slate-800 bg-slate-950/50">
-              <div className="flex items-center gap-2.5 text-blue-400">
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-950/50">
+              <div className="flex items-center gap-2 text-blue-400">
                 <Video className="w-5 h-5" />
-                <h3 className="text-lg font-bold text-white">Provision New YOLOv8 Video Pipeline</h3>
+                <h3 className="text-base font-bold text-white">Add IP Camera</h3>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors"
+                className="text-slate-400 hover:text-white p-1"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleAddCameraSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleAddCameraSubmit} className="p-5 space-y-4 text-xs">
               {formError && (
-                <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg text-xs font-semibold">
-                  ⚠️ {formError}
+                <div className="p-2.5 bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg font-medium">
+                  {formError}
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">
-                    Camera Label Name
-                  </label>
-                  <Input
-                    placeholder="e.g., Warehouse Loading Dock"
-                    value={newCamName}
-                    onChange={(e) => setNewCamName(e.target.value)}
-                    className="bg-slate-950 border-slate-700 text-white text-sm"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">
-                    Location / Functional Zone
-                  </label>
-                  <Input
-                    placeholder="e.g., Ground Floor - Zone J"
-                    value={newCamLocation}
-                    onChange={(e) => setNewCamLocation(e.target.value)}
-                    className="bg-slate-950 border-slate-700 text-white text-sm"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">
-                    Connection Protocol
-                  </label>
-                  <Select value={connectionType} onValueChange={setConnectionType}>
-                    <SelectTrigger className="bg-slate-950 border-slate-700 text-white text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-slate-900 border-slate-700">
-                      <SelectItem value="RTSP">IP Stream (RTSP Link)</SelectItem>
-                      <SelectItem value="Webcam">Hardware Device Index (USB)</SelectItem>
-                      <SelectItem value="File">Local Testing File Path</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">
-                    Inference Model Weight
-                  </label>
-                  <Select value={modelWeight} onValueChange={setModelWeight}>
-                    <SelectTrigger className="bg-slate-950 border-slate-700 text-white text-sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-slate-900 border-slate-700">
-                      <SelectItem value="yolov8n.pt">YOLOv8 Nano (Ultra Fast, Lightweight)</SelectItem>
-                      <SelectItem value="yolov8s.pt">YOLOv8 Small (Balanced Accuracy)</SelectItem>
-                      <SelectItem value="yolov8m.pt">YOLOv8 Medium (High Precision, Heavy)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wide">
-                  {connectionType === "RTSP" && "Target Stream URL Address"}
-                  {connectionType === "Webcam" && "System Hardware Index Target"}
-                  {connectionType === "File" && "Storage Server Video File Destination String"}
-                </label>
+              {/* Camera Name */}
+              <div className="space-y-1">
+                <label className="text-slate-300 font-medium">Camera / Zone Label</label>
                 <Input
-                  placeholder={
-                    connectionType === "RTSP"
-                      ? "rtsp://username:secretpass@192.168.1.100:554/h264"
-                      : connectionType === "Webcam"
-                      ? "0 (Default Device Camera)"
-                      : "videos/checkout_lane_test.mp4"
-                  }
-                  value={streamSource}
-                  onChange={(e) => setStreamSource(e.target.value)}
-                  className="bg-slate-950 border-slate-700 font-mono text-white text-sm"
+                  placeholder="e.g. Zone 4: Garden Section"
+                  value={camName}
+                  onChange={(e) => setCamName(e.target.value)}
+                  className="bg-slate-950 border-slate-700 text-white text-xs h-8"
                 />
               </div>
 
-              <div className="bg-slate-950 p-3 rounded-lg border border-slate-800 flex gap-3 text-xs text-slate-400 leading-normal">
-                <Settings2 className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
-                <p>
-                  <strong>Pipeline Registration Hook Notice:</strong> Submitting passes parameters down
-                  to your backend service daemon dynamically. Ensure target endpoints are firewall-whitelisted.
+              {/* IP Address & Channel */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-2 space-y-1">
+                  <label className="text-slate-300 font-medium">Camera IP Address</label>
+                  <Input
+                    placeholder="e.g. 192.168.1.54"
+                    value={camIp}
+                    onChange={(e) => setCamIp(e.target.value)}
+                    className="bg-slate-950 border-slate-700 font-mono text-white text-xs h-8"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-medium">Substream</label>
+                  <Input
+                    placeholder="102"
+                    value={camChannel}
+                    onChange={(e) => setCamChannel(e.target.value)}
+                    className="bg-slate-950 border-slate-700 font-mono text-white text-xs h-8"
+                  />
+                </div>
+              </div>
+
+              {/* RTSP Credentials */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-medium">RTSP Username</label>
+                  <Input
+                    value={camUser}
+                    onChange={(e) => setCamUser(e.target.value)}
+                    className="bg-slate-950 border-slate-700 text-white text-xs h-8"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-medium">RTSP Password</label>
+                  <Input
+                    type="password"
+                    value={camPass}
+                    onChange={(e) => setCamPass(e.target.value)}
+                    className="bg-slate-950 border-slate-700 text-white text-xs h-8"
+                  />
+                </div>
+              </div>
+
+              {/* Counting Line Y Offset */}
+              <div className="space-y-1 bg-slate-950 p-3 rounded-lg border border-slate-800">
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-slate-300 font-medium flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5 text-blue-400" />
+                    Tripwire Line Y-Position
+                  </label>
+                  <span className="font-mono text-blue-400 font-bold">{camLineY} px</span>
+                </div>
+                <input
+                  type="range"
+                  min="100"
+                  max="450"
+                  step="10"
+                  value={camLineY}
+                  onChange={(e) => setCamLineY(Number(e.target.value))}
+                  className="w-full accent-blue-500 cursor-pointer"
+                />
+                <p className="text-[10px] text-slate-500">
+                  Defines the horizontal line height where person crossing triggers entry/exit count.
                 </p>
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
                 <Button
                   type="button"
                   variant="ghost"
                   onClick={() => setIsModalOpen(false)}
-                  className="text-slate-300 hover:bg-slate-800"
+                  className="text-slate-400 text-xs h-8"
                 >
                   Cancel
                 </Button>
-                <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white">
-                  Establish Feed Pipe
+                <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-8 px-4">
+                  Connect Camera
                 </Button>
               </div>
             </form>
@@ -271,110 +314,62 @@ export default function CamerasPage() {
       {/* Header Bar */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-2">Live Camera Monitoring</h1>
-          <p className="text-slate-400">Real-time monitoring of all security cameras with YOLOv8 detection</p>
+          <h1 className="text-2xl font-bold text-white">Live Camera Streams</h1>
+          <p className="text-xs text-slate-400 mt-0.5">Real-time YOLOv8 object tracking and foot traffic monitoring</p>
         </div>
         <Button
           onClick={() => setIsModalOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 font-medium text-white shadow-lg"
+          className="bg-blue-600 hover:bg-blue-700 font-medium text-white text-xs"
         >
-          <Plus className="h-4 w-4 mr-2" />
+          <Plus className="h-4 w-4 mr-1.5" />
           Add Camera
         </Button>
       </div>
 
-      {/* Filters and Search Container Interface */}
-      <div className="flex flex-col sm:flex-row gap-4">
+      {/* Controls Bar */}
+      <div className="flex flex-col sm:flex-row gap-3">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
           <Input
-            placeholder="Search cameras by label or location..."
+            placeholder="Search by zone name or IP address..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10 bg-slate-800 border-slate-700 text-white focus:border-blue-500"
+            className="pl-9 bg-slate-800 border-slate-700 text-white text-xs focus:border-blue-500"
           />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-full sm:w-48 bg-slate-800 border-slate-700 text-white">
-            <Filter className="h-4 w-4 mr-2 text-slate-400" />
-            <SelectValue placeholder="Filter by status" />
+          <SelectTrigger className="w-full sm:w-44 bg-slate-800 border-slate-700 text-white text-xs">
+            <Filter className="h-3.5 w-3.5 mr-2 text-slate-400" />
+            <SelectValue placeholder="Status" />
           </SelectTrigger>
-          <SelectContent className="bg-slate-800 border-slate-700 text-white">
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="online">Online Channels</SelectItem>
-            <SelectItem value="offline">Offline Channels</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={zoneFilter} onValueChange={setZoneFilter}>
-          <SelectTrigger className="w-full sm:w-48 bg-slate-800 border-slate-700 text-white">
-            <Layers className="h-4 w-4 mr-2 text-slate-400" />
-            <SelectValue placeholder="Filter by zone" />
-          </SelectTrigger>
-          <SelectContent className="bg-slate-800 border-slate-700 text-white">
-            <SelectItem value="all-zones">All Facility Zones</SelectItem>
-            <SelectItem value="main">Main Floor Level</SelectItem>
-            <SelectItem value="2nd">2nd Floor Level</SelectItem>
-            <SelectItem value="ground">Ground Floor Level</SelectItem>
+          <SelectContent className="bg-slate-800 border-slate-700 text-white text-xs">
+            <SelectItem value="all">All Cameras ({cameras.length})</SelectItem>
+            <SelectItem value="online">Online ({cameras.filter(c => c.isOnline).length})</SelectItem>
+            <SelectItem value="offline">Offline ({cameras.filter(c => !c.isOnline).length})</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      {/* Camera Performance Summary Stats Dashboard */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
-          <p className="text-slate-400 text-sm mb-1">Total Streams Registered</p>
-          <p className="text-2xl font-bold text-white">{cameras.length}</p>
-        </div>
-        <div className="bg-slate-800/50 border border-green-500/50 rounded-lg p-4">
-          <p className="text-slate-400 text-sm mb-1">Online Pipeline Nodes</p>
-          <p className="text-2xl font-bold text-green-500">
-            {cameras.filter((c) => c.isOnline).length}
-          </p>
-        </div>
-        <div className="bg-slate-800/50 border border-red-500/50 rounded-lg p-4">
-          <p className="text-slate-400 text-sm mb-1">Offline Nodes</p>
-          <p className="text-2xl font-bold text-red-500">
-            {cameras.filter((c) => !c.isOnline).length}
-          </p>
-        </div>
-        <div className="bg-slate-800/50 border border-blue-500/50 rounded-lg p-4">
-          <p className="text-slate-400 text-sm mb-1">Combined Live Occupancy Count</p>
-          <p className="text-2xl font-bold text-blue-500">
-            {cameras.reduce((sum, c) => sum + (c.isOnline ? c.liveCount : 0), 0)}
-          </p>
-        </div>
+      {/* Camera Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {filteredCameras.map((camera) => (
+          <CameraCard
+            key={camera.id}
+            id={camera.id}
+            name={camera.name}
+            location={camera.location}
+            liveCount={camera.liveCount}
+            entryCount={camera.entryCount}
+            exitCount={camera.exitCount}
+            isOnline={camera.isOnline}
+            isStreaming={camera.isStreaming}
+            streamUrl={camera.streamUrl}
+            onToggleCamera={() => toggleCameraStream(camera.id)}
+            onResetCounts={() => resetCameraCounts(camera.name)}
+            onDelete={() => deleteCameraPipeline(camera.name)}
+          />
+        ))}
       </div>
-
-      {/* Live Active Rendering Grid View */}
-      {filteredCameras.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filteredCameras.map((camera) => (
-            <CameraCard
-              key={camera.id}
-              id={camera.id}
-              name={camera.name}
-              location={camera.location}
-              liveCount={camera.liveCount}
-              entryCount={camera.entryCount}
-              exitCount={camera.exitCount}
-              isOnline={camera.isOnline}
-              isStreaming={camera.isStreaming}
-              streamUrl={`http://127.0.0.1:8000/api/video_feed/${camera.id}`}
-              onViewAnalytics={() => console.log("View analytics for", camera.name)}
-              onConfigure={() => console.log("Configure", camera.name)}
-              onToggleCamera={() => toggleCameraStream(camera.id)}
-              onResetCounts={() => resetCameraCounts(camera.name)}
-              onDelete={() => deleteCameraPipeline(camera.name)}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-12 border border-dashed border-slate-800 bg-slate-900/10 rounded-xl">
-          <p className="text-slate-400 text-sm">
-            No cameras match the selected search criteria or zone filters.
-          </p>
-        </div>
-      )}
     </div>
   );
 }

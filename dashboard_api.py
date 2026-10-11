@@ -1,26 +1,17 @@
 import mysql.connector
 from mysql.connector import Error
-import cv2
-import time
+import requests
 from typing import Optional
 from pydantic import BaseModel
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-
-# Import global frame store from traffic_counter.py safely
-try:
-    from traffic_counter import GLOBAL_FRAMES
-except ImportError:
-    GLOBAL_FRAMES = {}
 
 # ------------------------------------------------------------------
 # 1. FASTAPI APP & CORS INITIALIZATION
 # ------------------------------------------------------------------
 app = FastAPI(title="Mr. DIY Foot Traffic Analytics API")
 
-# Enable CORS for React frontend polling
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,6 +19,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+STREAM_SERVER_URL = "http://127.0.0.1:8001"
+
+
+def check_stream_server_health():
+    """Queries traffic_counter.py on Port 8001 for active camera status."""
+    try:
+        res = requests.get(f"{STREAM_SERVER_URL}/api/health", timeout=0.8)
+        if res.status_code == 200:
+            return res.json().get("cameras", {})
+    except Exception:
+        pass
+    return {}
 
 
 def get_db_connection():
@@ -49,7 +53,6 @@ class TrafficEvent(BaseModel):
 
 def record_traffic_event(event: TrafficEvent):
     """Records traffic entry/exit events into the MySQL database."""
-    # Normalize direction to uppercase
     direction_upper = str(event.direction).upper()
     if direction_upper in ["IN", "ENTRY"]:
         direction_upper = "ENTRY"
@@ -65,7 +68,6 @@ def record_traffic_event(event: TrafficEvent):
         connection = get_db_connection()
         cursor = connection.cursor()
 
-        # Insert into foot_traffic_logs using camera_id column
         try:
             query = """
                 INSERT INTO foot_traffic_logs
@@ -74,7 +76,6 @@ def record_traffic_event(event: TrafficEvent):
             """
             cursor.execute(query, (event.branch_id, event.camera_id, direction_upper, event.track_id))
         except Error:
-            # Fallback if camera_id column is missing
             query = """
                 INSERT INTO foot_traffic_logs
                 (branch_id, direction, track_id)
@@ -110,7 +111,9 @@ def record_traffic_event(event: TrafficEvent):
 
 
 def fetch_dashboard_stats():
-    """Queries MySQL for current day traffic metrics and aggregates 24-hour trends."""
+    """Queries MySQL for current day traffic metrics and bridges camera status from Port 8001."""
+    active_cameras_map = check_stream_server_health()
+
     connection = None
     cursor = None
     try:
@@ -158,7 +161,6 @@ def fetch_dashboard_stats():
             for row in rows
         }
 
-        # Build full 24-hour array (0-23 hours)
         hourly_trends = []
         for hour in range(24):
             if hour in hourly_lookup:
@@ -186,7 +188,6 @@ def fetch_dashboard_stats():
             for row in cam_rows if row["camera_id"]
         }
 
-        # Camera online/offline status & zone stats mapping
         cameras_status = []
         zone_names = {
             "cam_1": "Zone 1: Main Entrance & Exit Gate",
@@ -195,17 +196,22 @@ def fetch_dashboard_stats():
         }
 
         for cam_id in ["cam_1", "cam_2", "cam_3"]:
-            is_online = cam_id in GLOBAL_FRAMES and GLOBAL_FRAMES[cam_id] is not None
+            is_online = active_cameras_map.get(cam_id, False)
             stats = cam_stats_map.get(cam_id, {"entries": 0, "exits": 0, "detected": 0})
             
             cameras_status.append({
                 "id": cam_id,
                 "name": zone_names.get(cam_id, cam_id),
                 "isOnline": is_online,
+                "isStreaming": is_online,
+                "streamUrl": f"{STREAM_SERVER_URL}/api/video_feed/{cam_id}",
                 "entries": stats["entries"],
                 "exits": stats["exits"],
                 "detected": stats["detected"],
-                "visitors": stats["detected"]  # Supports UI 'visitors' label
+                "visitors": stats["detected"],
+                "liveCount": stats["detected"],
+                "entryCount": stats["entries"],
+                "exitCount": stats["exits"]
             })
 
         return {
@@ -232,27 +238,12 @@ def fetch_dashboard_stats():
             connection.close()
 
 
-def generate_mjpeg_stream(camera_id: str):
-    """Generates continuous JPEG image chunks from memory for video streaming."""
-    while True:
-        if camera_id in GLOBAL_FRAMES and GLOBAL_FRAMES[camera_id] is not None:
-            frame = GLOBAL_FRAMES[camera_id]
-            ret, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-            if ret:
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
-                )
-        time.sleep(0.04)  # ~25 FPS
-
-
 # ------------------------------------------------------------------
 # 2. FASTAPI ROUTE DEFINITIONS
 # ------------------------------------------------------------------
 
 @app.post("/api/traffic")
 async def post_traffic_event(event: TrafficEvent):
-    """Receives YOLO entry/exit events from traffic_counter.py."""
     result = record_traffic_event(event)
     if result.get("status") == "error":
         raise HTTPException(status_code=400, detail=result.get("message"))
@@ -261,17 +252,7 @@ async def post_traffic_event(event: TrafficEvent):
 
 @app.get("/api/dashboard-stats")
 async def get_dashboard_stats():
-    """Serves real-time traffic summary and zone statistics to React UI."""
     return fetch_dashboard_stats()
-
-
-@app.get("/api/video_feed/{camera_id}")
-async def video_feed(camera_id: str):
-    """Provides live MJPEG camera streams to the frontend."""
-    return StreamingResponse(
-        generate_mjpeg_stream(camera_id),
-        media_type="multipart/x-mixed-replace; boundary=frame"
-    )
 
 
 if __name__ == "__main__":
