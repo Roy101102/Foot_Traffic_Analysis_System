@@ -54,7 +54,7 @@ const findCameraData = (cameraString: string, camerasList: any[]) => {
   const cleanCamStr = cameraString.toLowerCase();
 
   return camerasList.find((c: any) => {
-    const idStr = String(c.id || "").toLowerCase();
+    const idStr = String(c.id || c.camera_id || "").toLowerCase();
     const nameStr = String(c.name || "").toLowerCase();
     const locStr = String(c.location || c.location_ip || c.ip || "").toLowerCase();
     const combined = `${idStr} ${nameStr} ${locStr}`;
@@ -68,6 +68,13 @@ const findCameraData = (cameraString: string, camerasList: any[]) => {
     if (cleanCamStr.includes("192.168.1.53") || cleanCamStr.includes("camera #3") || cleanCamStr.includes("cam_3")) {
       return combined.includes("53") || combined.includes("cam_3") || idStr === "3";
     }
+    
+    // Fallback: Match by IP address string
+    const ipMatch = cleanCamStr.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+    if (ipMatch && combined.includes(ipMatch[0])) {
+      return true;
+    }
+
     return false;
   });
 };
@@ -165,56 +172,91 @@ export default function DashboardPage() {
   const totalExits = liveTraffic?.summary?.total_exits ?? 0;
   const occupancy = liveTraffic?.summary?.current_occupancy ?? 0;
 
-  // DYNAMIC CAMERA MAPPING WITH PORT 8001 STREAMING ENDPOINTS
-  const cameras = liveTraffic?.cameras?.map((cam: any) => ({
-    ...cam,
-    isOnline: cam.isOnline ?? cam.is_online ?? true,
-    isStreaming: cam.isStreaming ?? true,
-    entryCount: cam.entryCount ?? cam.entry_count ?? cam.entries ?? cam.total_entries ?? cam.count ?? 0,
-    exitCount: cam.exitCount ?? cam.exit_count ?? cam.exits ?? 0,
-    liveCount: cam.liveCount ?? cam.live_count ?? cam.occupancy ?? cam.current_occupancy ?? 0,
-    streamUrl: cam.streamUrl || `http://127.0.0.1:8001/api/video_feed/${cam.id}`,
-  })) ?? [
-    { 
-      id: "cam_1", 
-      name: "Zone 1: Main Entrance & Exit", 
-      location: "192.168.1.51", 
-      liveCount: occupancy, 
-      entryCount: totalEntries, 
-      exitCount: totalExits, 
-      isOnline: true, 
-      isStreaming: true,
-      streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_1" 
-    },
-    { 
-      id: "cam_2", 
-      name: "Zone 2: Aisle 1 (Hardware)", 
-      location: "192.168.1.52", 
-      liveCount: Math.round(occupancy * 0.55), 
-      entryCount: Math.round(totalEntries * 0.58), 
-      exitCount: Math.round(totalExits * 0.50), 
-      isOnline: true, 
-      isStreaming: true,
-      streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_2" 
-    },
-    { 
-      id: "cam_3", 
-      name: "Zone 3: Aisle 2 (Household)", 
-      location: "192.168.1.53", 
-      liveCount: Math.round(occupancy * 0.45), 
-      entryCount: Math.round(totalEntries * 0.42), 
-      exitCount: Math.round(totalExits * 0.50), 
-      isOnline: true, 
-      isStreaming: true,
-      streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_3" 
-    },
-  ];
+  // FETCH REAL-TIME CAMERA STREAMS DIRECTLY FROM STREAMING SERVER (PORT 8001)
+  const [streamBackendCameras, setStreamBackendCameras] = useState<any[]>([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchBackendCameras = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8001/api/cameras");
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && Array.isArray(data)) {
+            setStreamBackendCameras(data);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch cameras from Port 8001 backend", err);
+      }
+    };
+
+    fetchBackendCameras();
+    const interval = setInterval(fetchBackendCameras, 3000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // DYNAMIC CAMERA MAPPING
+  const cameras = streamBackendCameras.length > 0
+    ? streamBackendCameras.map((sCam: any) => {
+        const matchedTraffic = liveTraffic?.cameras?.find(
+          (tCam: any) => tCam.id === sCam.id || tCam.ip === sCam.ip || tCam.name === sCam.name
+        );
+
+        return {
+          ...sCam,
+          id: sCam.id || sCam.camera_id,
+          name: sCam.name,
+          location: sCam.ip,
+          isOnline: sCam.isOnline ?? true,
+          isStreaming: sCam.isStreaming ?? true,
+          entryCount: matchedTraffic?.entries ?? matchedTraffic?.entryCount ?? sCam.entryCount ?? sCam.entry_count ?? 0,
+          exitCount: matchedTraffic?.exits ?? matchedTraffic?.exitCount ?? sCam.exitCount ?? sCam.exit_count ?? 0,
+          liveCount: matchedTraffic?.detected ?? matchedTraffic?.liveCount ?? sCam.liveCount ?? sCam.live_count ?? 0,
+          streamUrl: sCam.streamUrl || `http://127.0.0.1:8001/api/video_feed/${sCam.id || sCam.camera_id}`,
+        };
+      })
+    : liveTraffic?.cameras?.map((cam: any) => ({
+        ...cam,
+        isOnline: cam.isOnline ?? cam.is_online ?? true,
+        isStreaming: cam.isStreaming ?? true,
+        entryCount: cam.entryCount ?? cam.entry_count ?? cam.entries ?? cam.total_entries ?? cam.count ?? 0,
+        exitCount: cam.exitCount ?? cam.exit_count ?? cam.exits ?? 0,
+        liveCount: cam.liveCount ?? cam.live_count ?? cam.occupancy ?? cam.current_occupancy ?? 0,
+        streamUrl: cam.streamUrl || `http://127.0.0.1:8001/api/video_feed/${cam.id}`,
+      })) ?? [
+        { 
+          id: "cam_1", 
+          name: "Zone 1: Main Entrance & Exit", 
+          location: "192.168.1.51", 
+          liveCount: occupancy, 
+          entryCount: totalEntries, 
+          exitCount: totalExits, 
+          isOnline: true, 
+          isStreaming: true,
+          streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_1" 
+        },
+        { 
+          id: "cam_2", 
+          name: "Zone 2: Aisle 1 (Hardware)", 
+          location: "192.168.1.52", 
+          liveCount: Math.round(occupancy * 0.55), 
+          entryCount: Math.round(totalEntries * 0.58), 
+          exitCount: Math.round(totalExits * 0.50), 
+          isOnline: true, 
+          isStreaming: true,
+          streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_2" 
+        },
+      ];
 
   const activeCameraCount = cameras.filter((c: any) => c.isOnline).length;
   const conversionRate = totalEntries > 0 ? parseFloat(((confirmedTransactions / totalEntries) * 100).toFixed(1)) : 0;
   const pendingConversionRate = totalEntries > 0 ? parseFloat(((pendingTransactions / totalEntries) * 100).toFixed(1)) : 0;
 
-  // DYNAMIC SECTIONS
+  // STORE SECTIONS CONFIGURATION
   const [sections, setSections] = useState<SectionConfig[]>([
     {
       id: "z2",
@@ -230,12 +272,49 @@ export default function DashboardPage() {
     },
   ]);
 
+  // AUTOMATIC SECTION SYNC: Adds a section entry for any newly connected camera if not present
+  useEffect(() => {
+    if (cameras.length === 0) return;
+
+    setSections((prev) => {
+      const updated = [...prev];
+      let changed = false;
+
+      cameras.forEach((cam: any) => {
+        // Exclude entrance gate (Zone 1 / 192.168.1.51) as it's the fixed bottom access gateway
+        if (cam.ip?.includes("51") || cam.id === "cam_1" || cam.name?.toLowerCase().includes("entrance")) {
+          return;
+        }
+
+        const exists = updated.some((sec) => findCameraData(sec.camera, [cam]) !== null);
+
+        if (!exists && cam.isOnline) {
+          changed = true;
+          updated.push({
+            id: `sec_${cam.id || Date.now()}`,
+            section: cam.name || `Zone: ${cam.ip}`,
+            camera: `Camera (${cam.ip})`,
+            zoneArea: updated.length % 2 === 0 ? "left-wing" : "right-wing",
+          });
+        }
+      });
+
+      return changed ? updated : prev;
+    });
+  }, [cameras]);
+
+  // DYNAMIC SECTION FILTERING: Only display sections whose cameras are online
+  const activeSections = sections.filter((sec) => {
+    const camData = findCameraData(sec.camera, cameras);
+    return camData ? camData.isOnline : false;
+  });
+
   const [isAddSectionOpen, setIsAddSectionOpen] = useState<boolean>(false);
   const [newSectionName, setNewSectionName] = useState<string>("");
   const [newSectionCamera, setNewSectionCamera] = useState<string>("");
   const [sectionToDelete, setSectionToDelete] = useState<SectionConfig | null>(null);
 
-  // FILTER UNUSED AISLE CAMERAS ONLY (Excludes assigned cameras and Camera #1)
+  // FILTER UNUSED AISLE CAMERAS ONLY
   const availableCameras = MASTER_CAMERA_LIST.filter(
     (cam) => !sections.some((sec) => sec.camera === cam.id)
   );
@@ -275,7 +354,7 @@ export default function DashboardPage() {
     }
   };
 
-  // DRAG & DROP WING RE-ASSIGNMENT (Left Wing & Right Wing target drop zones only)
+  // DRAG & DROP WING RE-ASSIGNMENT
   const handleDragStart = (id: string) => {
     if (!isEditLayoutMode) return;
     setDraggedSectionId(id);
@@ -359,7 +438,7 @@ export default function DashboardPage() {
     };
   });
 
-  // PRODUCTION DYNAMIC CONVERSION RATE TREND
+  // DYNAMIC CONVERSION RATE TREND
   const dynamicConversionTrendData = hourlyTrends.length > 0
     ? hourlyTrends.map((item) => {
         const hrsVisitors = item.entries;
@@ -718,7 +797,7 @@ export default function DashboardPage() {
               <h2 className="text-xl font-bold text-white">Interactive Collision-Free Floor Plan</h2>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Drag aisle blocks to reassign them across active floor plan wings ({sections.length} Active Heat Zones)
+              Drag aisle blocks to reassign them across active floor plan wings ({activeSections.length} Active Heat Zones)
             </p>
           </div>
 
@@ -791,11 +870,11 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 border-b border-slate-800 pb-1.5">
                   <span className="font-bold uppercase text-slate-300">LEFT WING AISLES</span>
                   <span className="text-slate-500">
-                    {sections.filter(s => s.zoneArea === "left-wing").length} Sections
+                    {activeSections.filter(s => s.zoneArea === "left-wing").length} Sections
                   </span>
                 </div>
 
-                {sections
+                {activeSections
                   .filter((sec) => sec.zoneArea === "left-wing" || (!sec.zoneArea && sec.camera.includes("192.168.1.52")))
                   .map((sec) => {
                     const metrics = resolveCameraMetrics(sec.camera, cameras, totalEntries);
@@ -855,11 +934,11 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 border-b border-slate-800 pb-1.5">
                   <span className="font-bold uppercase text-slate-300">RIGHT WING AISLES</span>
                   <span className="text-slate-500">
-                    {sections.filter(s => s.zoneArea === "right-wing" || s.zoneArea === "back-annex").length} Sections
+                    {activeSections.filter(s => s.zoneArea === "right-wing" || s.zoneArea === "back-annex").length} Sections
                   </span>
                 </div>
 
-                {sections
+                {activeSections
                   .filter((sec) => sec.zoneArea === "right-wing" || sec.zoneArea === "back-annex" || (!sec.zoneArea && sec.camera.includes("192.168.1.53")))
                   .map((sec) => {
                     const metrics = resolveCameraMetrics(sec.camera, cameras, totalEntries);
@@ -943,12 +1022,12 @@ export default function DashboardPage() {
             <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex flex-col h-full min-h-0">
               <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between pb-2 border-b border-slate-800 shrink-0">
                 <span>Active Store Zones</span>
-                <span className="text-blue-400">{sections.length} Zones</span>
+                <span className="text-blue-400">{activeSections.length} Zones</span>
               </h3>
 
               {/* DYNAMIC FULL HEIGHT LIST */}
               <div className="space-y-2.5 flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar pt-2">
-                {sections.map((sec) => {
+                {activeSections.map((sec) => {
                   const metrics = resolveCameraMetrics(sec.camera, cameras, totalEntries);
                   const styles = getTrafficBadgeStyle(metrics.level, metrics.isEntrance);
 

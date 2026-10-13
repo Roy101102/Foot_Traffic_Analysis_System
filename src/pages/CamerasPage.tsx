@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { CameraCard } from "../components/CameraCard";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
-import { Search, Plus, Filter, Video, X, Layers, Sliders } from "lucide-react";
+import { Search, Plus, Filter, Video, X, Sliders, RefreshCw, Eye, EyeOff } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -29,79 +29,105 @@ interface CameraItem {
   streamUrl?: string;
 }
 
+const STREAMER_API_BASE = "http://127.0.0.1:8001/api";
+
 export default function CamerasPage() {
   const { liveTraffic } = useDashboard();
 
-  // Primary MR. DIY store cameras matching traffic_counter.py
+  // Primary store camera state initialized with Zone 1 & Zone 2
   const [cameras, setCameras] = useState<CameraItem[]>([
-    { 
-      id: "cam_1", 
-      name: "Zone 1: Main Entrance Gate", 
-      location: "Main Floor - Entrance", 
-      liveCount: 0, 
-      entryCount: 0, 
-      exitCount: 0, 
-      isOnline: true, 
-      isStreaming: true, 
+    {
+      id: "cam_1",
+      name: "Zone 1: Main Entrance Gate",
+      location: "Main Floor - Entrance",
+      liveCount: 0,
+      entryCount: 0,
+      exitCount: 0,
+      isOnline: true,
+      isStreaming: true,
       ip: "192.168.1.51",
       user: "admin",
       pass: "Group5Bayawan",
       channel: "102",
       lineY: 300,
-      streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_1"
+      streamUrl: `${STREAMER_API_BASE}/video_feed/cam_1`,
     },
-    { 
-      id: "cam_2", 
-      name: "Zone 2: Hardware & Tools Aisle", 
-      location: "Main Floor - Aisle 1", 
-      liveCount: 0, 
-      entryCount: 0, 
-      exitCount: 0, 
-      isOnline: true, 
-      isStreaming: true, 
+    {
+      id: "cam_2",
+      name: "Zone 2: Hardware & Tools Aisle",
+      location: "Main Floor - Aisle 1",
+      liveCount: 0,
+      entryCount: 0,
+      exitCount: 0,
+      isOnline: true,
+      isStreaming: true,
       ip: "192.168.1.52",
       user: "admin",
       pass: "Group5Bayawan",
       channel: "102",
       lineY: 300,
-      streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_2"
-    },
-    { 
-      id: "cam_3", 
-      name: "Zone 3: Household & Electrical Aisle", 
-      location: "Main Floor - Aisle 2", 
-      liveCount: 0, 
-      entryCount: 0, 
-      exitCount: 0, 
-      isOnline: true, 
-      isStreaming: true, 
-      ip: "192.168.1.53",
-      user: "admin",
-      pass: "Group5Bayawan",
-      channel: "102",
-      lineY: 300,
-      streamUrl: "http://127.0.0.1:8001/api/video_feed/cam_3"
+      streamUrl: `${STREAMER_API_BASE}/video_feed/cam_2`,
     },
   ]);
 
-  // Sync telemetry from dashboard_api (Port 8000)
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Initial fetch from traffic_counter backend (Port 8001)
+  const fetchBackendCameras = async () => {
+    try {
+      setIsLoading(true);
+      const res = await fetch(`${STREAMER_API_BASE}/cameras`);
+      if (res.ok) {
+        const backendCams = await res.json();
+        if (Array.isArray(backendCams) && backendCams.length > 0) {
+          setCameras(
+            backendCams.map((b: any) => ({
+              id: b.id || b.camera_id,
+              name: b.name,
+              location: `Zone: ${b.name}`,
+              liveCount: b.liveCount ?? 0,
+              entryCount: b.entryCount ?? 0,
+              exitCount: b.exitCount ?? 0,
+              isOnline: b.isOnline ?? true,
+              isStreaming: b.isStreaming ?? true,
+              ip: b.ip,
+              user: b.user || "admin",
+              channel: b.channel || "102",
+              lineY: b.lineY ?? b.line_y ?? 300,
+              streamUrl: b.streamUrl || `${STREAMER_API_BASE}/video_feed/${b.id || b.camera_id}`,
+            }))
+          );
+        }
+      }
+    } catch (err) {
+      console.warn("Could not reach streaming backend directly at 8001. Using fallback local state.", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchBackendCameras();
+  }, []);
+
+  // Sync telemetry metrics continuously from DashboardContext (Port 8000)
   useEffect(() => {
     if (!liveTraffic?.cameras || liveTraffic.cameras.length === 0) return;
 
     setCameras((prev) =>
       prev.map((cam) => {
         const matchedBackend = liveTraffic.cameras.find(
-          (bCam: any) => bCam.id === cam.id || bCam.name === cam.name
+          (bCam: any) => bCam.id === cam.id || bCam.camera_id === cam.id || bCam.name === cam.name
         );
 
         if (matchedBackend) {
           return {
             ...cam,
-            isOnline: matchedBackend.isOnline ?? matchedBackend.is_online ?? true,
+            isOnline: matchedBackend.isOnline ?? matchedBackend.is_online ?? cam.isOnline,
             liveCount: matchedBackend.liveCount ?? matchedBackend.detected ?? cam.liveCount,
             entryCount: matchedBackend.entryCount ?? matchedBackend.entries ?? cam.entryCount,
             exitCount: matchedBackend.exitCount ?? matchedBackend.exits ?? cam.exitCount,
-            streamUrl: matchedBackend.streamUrl || `http://127.0.0.1:8001/api/video_feed/${cam.id}`,
+            streamUrl: matchedBackend.streamUrl || `${STREAMER_API_BASE}/video_feed/${cam.id}`,
           };
         }
         return cam;
@@ -109,21 +135,34 @@ export default function CamerasPage() {
     );
   }, [liveTraffic]);
 
-  // Modal State
+  // Modal & Search Filter State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // Practical Camera Form Fields
+  // Production Form Fields & Password Toggle State
   const [camName, setCamName] = useState("");
   const [camIp, setCamIp] = useState("");
   const [camUser, setCamUser] = useState("admin");
-  const [camPass, setCamPass] = useState("Group5Bayawan");
+  const [camPass, setCamPass] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [camChannel, setCamChannel] = useState("102");
   const [camLineY, setCamLineY] = useState(300);
   const [formError, setFormError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleAddCameraSubmit = (e: React.FormEvent) => {
+  const resetFormFields = () => {
+    setCamName("");
+    setCamIp("");
+    setCamUser("admin");
+    setCamPass("");
+    setShowPassword(false);
+    setCamChannel("102");
+    setCamLineY(300);
+    setFormError("");
+  };
+
+  const handleAddCameraSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError("");
 
@@ -133,27 +172,59 @@ export default function CamerasPage() {
     }
 
     const newId = `cam_${Date.now()}`;
-    const newCam: CameraItem = {
-      id: newId,
+    const payload = {
+      camera_id: newId,
       name: camName.trim(),
-      location: `Zone: ${camName.trim()}`,
-      liveCount: 0,
-      entryCount: 0,
-      exitCount: 0,
-      isOnline: true,
-      isStreaming: true,
       ip: camIp.trim(),
       user: camUser,
       pass: camPass,
       channel: camChannel,
-      lineY: Number(camLineY) || 300,
-      streamUrl: `http://127.0.0.1:8001/api/video_feed/${newId}`,
+      line_y: Number(camLineY) || 300,
     };
 
-    setCameras([...cameras, newCam]);
-    setIsModalOpen(false);
-    setCamName("");
-    setCamIp("");
+    setIsSubmitting(true);
+
+    try {
+      const response = await fetch(`${STREAMER_API_BASE}/cameras`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          throw new Error("🔒 Authentication failed: Invalid RTSP username or password, or camera unreachable.");
+        }
+        throw new Error(errorData.detail || `Failed to connect camera (HTTP ${response.status})`);
+      }
+
+      const addedCam = await response.json();
+      const newCamItem: CameraItem = {
+        id: addedCam.id || newId,
+        name: addedCam.name || camName.trim(),
+        location: `Zone: ${camName.trim()}`,
+        liveCount: 0,
+        entryCount: 0,
+        exitCount: 0,
+        isOnline: true,
+        isStreaming: true,
+        ip: camIp.trim(),
+        user: camUser,
+        pass: camPass,
+        channel: camChannel,
+        lineY: Number(camLineY) || 300,
+        streamUrl: `${STREAMER_API_BASE}/video_feed/${addedCam.id || newId}`,
+      };
+
+      setCameras((prev) => [...prev, newCamItem]);
+      setIsModalOpen(false);
+      resetFormFields();
+    } catch (err: any) {
+      setFormError(err.message || "Failed to authenticate camera stream.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const filteredCameras = cameras.filter((cam) => {
@@ -175,24 +246,33 @@ export default function CamerasPage() {
     );
   };
 
-  const resetCameraCounts = (name: string) => {
+  const resetCameraCounts = async (id: string, name: string) => {
     if (confirm(`Reset counter metrics for ${name}?`)) {
+      try {
+        await fetch(`${STREAMER_API_BASE}/cameras/${id}/reset`, { method: "POST" });
+      } catch (err) {
+        console.warn(`Failed to reset counts on streamer API for ${id}`, err);
+      }
       setCameras((prev) =>
-        prev.map((c) => (c.name === name ? { ...c, entryCount: 0, exitCount: 0, liveCount: 0 } : c))
+        prev.map((c) => (c.id === id ? { ...c, entryCount: 0, exitCount: 0, liveCount: 0 } : c))
       );
     }
   };
 
-  const deleteCameraPipeline = (name: string) => {
+  const deleteCameraPipeline = async (id: string, name: string) => {
     if (confirm(`Delete camera feed ${name}?`)) {
-      setCameras((prev) => prev.filter((c) => c.name !== name));
+      try {
+        await fetch(`${STREAMER_API_BASE}/cameras/${id}`, { method: "DELETE" });
+      } catch (err) {
+        console.warn(`Failed to delete camera feed on streamer API for ${id}`, err);
+      }
+      setCameras((prev) => prev.filter((c) => c.id !== id));
     }
   };
 
   return (
     <div className="space-y-6 relative">
-      
-      {/* PRACTICAL ADD CAMERA MODAL */}
+      {/* ADD CAMERA MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full shadow-2xl overflow-hidden">
@@ -202,7 +282,10 @@ export default function CamerasPage() {
                 <h3 className="text-base font-bold text-white">Add IP Camera</h3>
               </div>
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => {
+                  setIsModalOpen(false);
+                  resetFormFields();
+                }}
                 className="text-slate-400 hover:text-white p-1"
               >
                 <X className="w-5 h-5" />
@@ -220,7 +303,7 @@ export default function CamerasPage() {
               <div className="space-y-1">
                 <label className="text-slate-300 font-medium">Camera / Zone Label</label>
                 <Input
-                  placeholder="e.g. Zone 4: Garden Section"
+                  placeholder="e.g. Zone 3: Household & Electrical Aisle"
                   value={camName}
                   onChange={(e) => setCamName(e.target.value)}
                   className="bg-slate-950 border-slate-700 text-white text-xs h-8"
@@ -232,7 +315,7 @@ export default function CamerasPage() {
                 <div className="col-span-2 space-y-1">
                   <label className="text-slate-300 font-medium">Camera IP Address</label>
                   <Input
-                    placeholder="e.g. 192.168.1.54"
+                    placeholder="e.g. 192.168.1.53"
                     value={camIp}
                     onChange={(e) => setCamIp(e.target.value)}
                     className="bg-slate-950 border-slate-700 font-mono text-white text-xs h-8"
@@ -254,6 +337,7 @@ export default function CamerasPage() {
                 <div className="space-y-1">
                   <label className="text-slate-300 font-medium">RTSP Username</label>
                   <Input
+                    placeholder="admin"
                     value={camUser}
                     onChange={(e) => setCamUser(e.target.value)}
                     className="bg-slate-950 border-slate-700 text-white text-xs h-8"
@@ -261,12 +345,27 @@ export default function CamerasPage() {
                 </div>
                 <div className="space-y-1">
                   <label className="text-slate-300 font-medium">RTSP Password</label>
-                  <Input
-                    type="password"
-                    value={camPass}
-                    onChange={(e) => setCamPass(e.target.value)}
-                    className="bg-slate-950 border-slate-700 text-white text-xs h-8"
-                  />
+                  <div className="relative">
+                    <Input
+                      type={showPassword ? "text" : "password"}
+                      placeholder="••••••••"
+                      value={camPass}
+                      onChange={(e) => setCamPass(e.target.value)}
+                      className="bg-slate-950 border-slate-700 text-white text-xs h-8 pr-8"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors p-0.5 focus:outline-none"
+                      title={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -297,13 +396,20 @@ export default function CamerasPage() {
                 <Button
                   type="button"
                   variant="ghost"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => {
+                    setIsModalOpen(false);
+                    resetFormFields();
+                  }}
                   className="text-slate-400 text-xs h-8"
                 >
                   Cancel
                 </Button>
-                <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-8 px-4">
-                  Connect Camera
+                <Button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs h-8 px-4"
+                >
+                  {isSubmitting ? "Testing & Connecting..." : "Connect Camera"}
                 </Button>
               </div>
             </form>
@@ -317,13 +423,24 @@ export default function CamerasPage() {
           <h1 className="text-2xl font-bold text-white">Live Camera Streams</h1>
           <p className="text-xs text-slate-400 mt-0.5">Real-time YOLOv8 object tracking and foot traffic monitoring</p>
         </div>
-        <Button
-          onClick={() => setIsModalOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 font-medium text-white text-xs"
-        >
-          <Plus className="h-4 w-4 mr-1.5" />
-          Add Camera
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={fetchBackendCameras}
+            disabled={isLoading}
+            className="border-slate-700 text-slate-300 text-xs h-9 bg-slate-900 hover:bg-slate-800"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isLoading ? "animate-spin" : ""}`} />
+            Sync Feeds
+          </Button>
+          <Button
+            onClick={() => setIsModalOpen(true)}
+            className="bg-blue-600 hover:bg-blue-700 font-medium text-white text-xs h-9"
+          >
+            <Plus className="h-4 w-4 mr-1.5" />
+            Add Camera
+          </Button>
+        </div>
       </div>
 
       {/* Controls Bar */}
@@ -344,8 +461,8 @@ export default function CamerasPage() {
           </SelectTrigger>
           <SelectContent className="bg-slate-800 border-slate-700 text-white text-xs">
             <SelectItem value="all">All Cameras ({cameras.length})</SelectItem>
-            <SelectItem value="online">Online ({cameras.filter(c => c.isOnline).length})</SelectItem>
-            <SelectItem value="offline">Offline ({cameras.filter(c => !c.isOnline).length})</SelectItem>
+            <SelectItem value="online">Online ({cameras.filter((c) => c.isOnline).length})</SelectItem>
+            <SelectItem value="offline">Offline ({cameras.filter((c) => !c.isOnline).length})</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -365,8 +482,8 @@ export default function CamerasPage() {
             isStreaming={camera.isStreaming}
             streamUrl={camera.streamUrl}
             onToggleCamera={() => toggleCameraStream(camera.id)}
-            onResetCounts={() => resetCameraCounts(camera.name)}
-            onDelete={() => deleteCameraPipeline(camera.name)}
+            onResetCounts={() => resetCameraCounts(camera.id, camera.name)}
+            onDelete={() => deleteCameraPipeline(camera.id, camera.name)}
           />
         ))}
       </div>
