@@ -147,13 +147,22 @@ export default function ConversionPage() {
       {/* Tabs View with onValueChange */}
       <Tabs defaultValue="hourly" onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-slate-800 border border-slate-700">
-          <TabsTrigger value="hourly" className="data-[state=active]:bg-blue-600">
+          <TabsTrigger
+            value="hourly"
+            className="text-slate-300 hover:text-white data-[state=active]:bg-blue-600 data-[state=active]:text-white cursor-pointer"
+          >
             Hourly
           </TabsTrigger>
-          <TabsTrigger value="weekly" className="data-[state=active]:bg-blue-600">
+          <TabsTrigger
+            value="weekly"
+            className="text-slate-300 hover:text-white data-[state=active]:bg-blue-600 data-[state=active]:text-white cursor-pointer"
+          >
             Weekly
           </TabsTrigger>
-          <TabsTrigger value="comparison" className="data-[state=active]:bg-blue-600">
+          <TabsTrigger
+            value="comparison"
+            className="text-slate-300 hover:text-white data-[state=active]:bg-blue-600 data-[state=active]:text-white cursor-pointer"
+          >
             Sales vs Traffic
           </TabsTrigger>
         </TabsList>

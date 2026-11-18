@@ -1,2 +1,17 @@
-node_modules
+# Dependencies & Builds
+node_modules/
+dist/
+
+# Python Cache & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+
+# Environment & Secrets
+.env
+.env.local
+
+# Local Video Files
 *.mp4

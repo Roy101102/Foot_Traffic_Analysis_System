@@ -4,7 +4,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Checkbox } from "../components/ui/checkbox";
-import { Lock, Mail } from "lucide-react";
+import { AlertCircle, Lock, Mail } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { login } from "../auth";
 
@@ -12,15 +12,23 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Save email to localStorage (falls back to default if empty)
-    localStorage.setItem("userEmail", email || "admin@company.com");
-    
-    login(); // Mark user as authenticated
-    navigate("/"); // Redirect to dashboard
+    setError(null);
+    setIsSubmitting(true);
+
+    try {
+      await login(email, password, rememberMe);
+      navigate("/", { replace: true });
+    } catch (err: any) {
+      setError(err?.message || "Invalid email or password");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -50,6 +58,13 @@ export default function LoginPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleLogin} className="space-y-6">
+              {error && (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <Label htmlFor="email" className="text-slate-300">
                   Email Address
@@ -59,10 +74,11 @@ export default function LoginPage() {
                   <Input
                     id="email"
                     type="email"
-                    placeholder="admin@company.com"
+                    placeholder="admin@store.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="pl-10 bg-slate-800 border-slate-700 text-white"
+                    disabled={isSubmitting}
                     required
                   />
                 </div>
@@ -81,6 +97,7 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-10 bg-slate-800 border-slate-700 text-white"
+                    disabled={isSubmitting}
                     required
                   />
                 </div>
@@ -88,7 +105,12 @@ export default function LoginPage() {
 
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
-                  <Checkbox id="remember" />
+                  <Checkbox
+                    id="remember"
+                    checked={rememberMe}
+                    onCheckedChange={(checked) => setRememberMe(checked === true)}
+                    disabled={isSubmitting}
+                  />
                   <Label htmlFor="remember" className="text-sm text-slate-300 cursor-pointer">
                     Remember me
                   </Label>
@@ -98,8 +120,12 @@ export default function LoginPage() {
                 </Link>
               </div>
 
-              <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700">
-                Sign In
+              <Button
+                type="submit"
+                disabled={isSubmitting}
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isSubmitting ? "Signing In..." : "Sign In"}
               </Button>
             </form>
 

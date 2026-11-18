@@ -1,4 +1,4 @@
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Camera,
@@ -22,37 +22,40 @@ import {
 } from "./ui/alert-dialog";
 import { useState } from "react";
 import { cn } from "./ui/utils";
-import { logout } from "../auth";
+import { logout, useCurrentUser, UserRole } from "../auth";
 
 interface SidebarProps {
-  userRole?: "admin" | "manager" | "viewer";
+  userRole?: UserRole;
   alertCount?: number;
 }
 
-export function Sidebar({ userRole = "admin" }: SidebarProps) {
-  const location = useLocation();
+export function Sidebar({ userRole = "viewer" }: SidebarProps) {
   const navigate = useNavigate();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
-  // Retrieve user email from localStorage
-  const userEmail = localStorage.getItem("userEmail") || "admin@company.com";
+  const user = useCurrentUser();
+  const effectiveRole: UserRole = user?.role ?? userRole;
+  const displayName = user?.name || user?.email || "User";
+  const displayEmail = user?.email || "";
 
-  // Updated Navigation without Alerts and User Management
   const navigation = [
-    { name: "Dashboard", href: "/", icon: LayoutDashboard },
-    { name: "Live Cameras", href: "/cameras", icon: Camera },
-    { name: "Traffic Analytics", href: "/traffic", icon: TrendingUp },
-    { name: "Conversion Analytics", href: "/conversion", icon: ShoppingCart },
-    { name: "Reports", href: "/reports", icon: FileText },
-    { name: "Settings", href: "/settings", icon: Settings },
+    { name: "Dashboard", href: "/", icon: LayoutDashboard, roles: ["admin", "manager", "viewer"] },
+    { name: "Live Cameras", href: "/cameras", icon: Camera, roles: ["admin", "manager", "viewer"] },
+    { name: "Traffic Analytics", href: "/traffic", icon: TrendingUp, roles: ["admin", "manager", "viewer"] },
+    { name: "Conversion Analytics", href: "/conversion", icon: ShoppingCart, roles: ["admin", "manager", "viewer"] },
+    { name: "Reports", href: "/reports", icon: FileText, roles: ["admin", "manager", "viewer"] },
+    { name: "Settings", href: "/settings", icon: Settings, roles: ["admin"] },
   ];
 
-  // Confirmed Logout Handler
-  const handleConfirmLogout = () => {
-    localStorage.removeItem("userEmail"); // Clean up stored email
-    logout();                            // Auth cleanup
-    navigate("/login");                  // Redirect to login page
+  const visibleNavigation = navigation.filter((item) =>
+    item.roles.includes(effectiveRole)
+  );
+
+  const handleConfirmLogout = async () => {
+    localStorage.removeItem("userEmail");
+    await logout();
+    navigate("/login", { replace: true });
   };
 
   const SidebarContent = () => (
@@ -60,9 +63,9 @@ export function Sidebar({ userRole = "admin" }: SidebarProps) {
       <div className="p-6 border-b border-slate-700">
         <div className="flex items-center gap-3">
           <div className="h-15 w-15 rounded-lg flex items-center justify-center">
-            <img 
-              src="images/Logo_DIY.png" 
-              alt="logo" 
+            <img
+              src="images/Logo_DIY.png"
+              alt="logo"
               className="h-full w-full object-contain"
             />
           </div>
@@ -74,7 +77,7 @@ export function Sidebar({ userRole = "admin" }: SidebarProps) {
       </div>
 
       <nav className="flex-1 p-4 space-y-1">
-        {navigation.map((item) => (
+        {visibleNavigation.map((item) => (
           <NavLink
             key={item.name}
             to={item.href}
@@ -99,21 +102,22 @@ export function Sidebar({ userRole = "admin" }: SidebarProps) {
       <div className="p-4 border-t border-slate-700">
         <div className="flex items-center gap-3 px-4 py-3 mb-2">
           <div className="h-10 w-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center font-bold text-white uppercase text-sm flex-shrink-0">
-            {userEmail.charAt(0)}
+            {displayName.charAt(0)}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate" title={userEmail}>
-              {userEmail}
+            <p className="text-sm font-medium text-white truncate" title={displayEmail || displayName}>
+              {displayName}
             </p>
-            <p className="text-xs text-slate-400 capitalize">
-              {userRole}
+            <p className="text-xs text-slate-400 truncate" title={displayEmail}>
+              {displayEmail ? `${displayEmail} • ` : ""}
+              <span className="capitalize">{effectiveRole}</span>
             </p>
           </div>
         </div>
 
-        <Button 
-          onClick={() => setShowLogoutConfirm(true)} 
-          variant="ghost" 
+        <Button
+          onClick={() => setShowLogoutConfirm(true)}
+          variant="ghost"
           className="w-full justify-start text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer"
         >
           <LogOut className="h-4 w-4 mr-3" />
@@ -160,13 +164,13 @@ export function Sidebar({ userRole = "admin" }: SidebarProps) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-4 gap-2">
-            <AlertDialogCancel 
+            <AlertDialogCancel
               onClick={() => setShowLogoutConfirm(false)}
               className="bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700 hover:text-white"
             >
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogAction
               onClick={handleConfirmLogout}
               className="bg-red-600 hover:bg-red-700 text-white"
             >

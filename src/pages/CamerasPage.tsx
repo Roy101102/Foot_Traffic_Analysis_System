@@ -469,23 +469,30 @@ export default function CamerasPage() {
 
       {/* Camera Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredCameras.map((camera) => (
-          <CameraCard
-            key={camera.id}
-            id={camera.id}
-            name={camera.name}
-            location={camera.location}
-            liveCount={camera.liveCount}
-            entryCount={camera.entryCount}
-            exitCount={camera.exitCount}
-            isOnline={camera.isOnline}
-            isStreaming={camera.isStreaming}
-            streamUrl={camera.streamUrl}
-            onToggleCamera={() => toggleCameraStream(camera.id)}
-            onResetCounts={() => resetCameraCounts(camera.id, camera.name)}
-            onDelete={() => deleteCameraPipeline(camera.id, camera.name)}
-          />
-        ))}
+        {filteredCameras.map((camera) => {
+          const isMainEntrance =
+            camera.id === "cam_1" ||
+            camera.name.toLowerCase().includes("entrance");
+
+          return (
+            <CameraCard
+              key={camera.id}
+              id={camera.id}
+              name={camera.name}
+              location={camera.location}
+              liveCount={camera.liveCount}
+              entryCount={camera.entryCount}
+              exitCount={camera.exitCount}
+              isOnline={camera.isOnline}
+              isStreaming={camera.isStreaming}
+              showMetrics={isMainEntrance}
+              streamUrl={camera.streamUrl}
+              onToggleCamera={() => toggleCameraStream(camera.id)}
+              onResetCounts={() => resetCameraCounts(camera.id, camera.name)}
+              onDelete={() => deleteCameraPipeline(camera.id, camera.name)}
+            />
+          );
+        })}
       </div>
     </div>
   );

@@ -22,7 +22,6 @@ os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffe
 API_URL = "http://127.0.0.1:8000/api/traffic"
 
 # Camera password: set the CAM_PASS environment variable to avoid keeping it in the code.
-# Falls back to the existing password so everything still works if you don't set it.
 CAM_PASS = os.getenv("CAM_PASS", "Group5Bayawan")
 
 # Reusable HTTP session for faster connection pooling
@@ -48,11 +47,13 @@ class CameraCreate(BaseModel):
     pass_word: Optional[str] = Field("", alias="pass")
     channel: Optional[str] = "102"
     line_y: Optional[int] = Field(300, ge=0, le=480)
+    count_traffic: Optional[bool] = None
 
 
 class CameraUpdate(BaseModel):
     name: Optional[str] = None
     line_y: Optional[int] = Field(None, ge=0, le=480)
+    count_traffic: Optional[bool] = None
 
 
 # ============================================================
@@ -102,6 +103,7 @@ DEFAULT_CAMERAS = [
         "pass": CAM_PASS,
         "channel": "102",
         "line_y": 300,
+        "count_traffic": True,   # Entrance/Exit gate: counts entries & exits
     },
     {
         "camera_id": "cam_2",
@@ -111,6 +113,7 @@ DEFAULT_CAMERAS = [
         "pass": CAM_PASS,
         "channel": "102",
         "line_y": 300,
+        "count_traffic": False,  # Interior aisle: heatmap & live presence only
     },
     {
         "camera_id": "cam_3",
@@ -120,6 +123,7 @@ DEFAULT_CAMERAS = [
         "pass": CAM_PASS,
         "channel": "102",
         "line_y": 300,
+        "count_traffic": False,  # Interior aisle: heatmap & live presence only
     },
 ]
 
@@ -127,15 +131,6 @@ DEFAULT_CAMERAS = [
 # ============================================================
 # FLOOR PLAN CALIBRATION (CAMERA PIXELS -> FLOOR PLAN 0..1)
 # ============================================================
-# "img"   = 4 points in the camera frame (640x480), in order:
-#           top-left, top-right, bottom-right, bottom-left
-# "floor" = where those same 4 spots are on the floor plan
-#           (x: 0 = left wall, 1 = right wall | y: 0 = back of store, 1 = entrance side)
-#
-# The values below map the WHOLE camera image to a rectangle of the floor plan,
-# so the heatmap works right away. For accurate results, replace "img" with the
-# pixel positions of 4 marked spots on the floor (e.g. tile corners) as seen by
-# each camera, and "floor" with the real positions of those spots on the plan.
 
 FLOOR_CALIBRATION = {
     "cam_1": {  # Entrance
@@ -233,6 +228,16 @@ class CameraCounterThread(threading.Thread):
         self.line_y = int(config.get("line_y", 300))
         self.stopped = False
 
+        # Only entrance cameras count entries/exits; interior zones only track heatmap points
+        if config.get("count_traffic") is not None:
+            self.count_traffic = bool(config["count_traffic"])
+        else:
+            self.count_traffic = (
+                self.camera_id == "cam_1"
+                or self.ip.strip() == "192.168.1.51"
+                or "entrance" in self.display_name.lower()
+            )
+
         self.latest_jpeg_bytes: Optional[bytes] = None
         self.last_frame_time: float = 0.0
         self.lock = threading.Lock()
@@ -271,6 +276,10 @@ class CameraCounterThread(threading.Thread):
         with self.lock:
             self.line_y = max(0, min(480, int(line_y)))
 
+    def set_count_traffic(self, enabled: bool):
+        with self.lock:
+            self.count_traffic = bool(enabled)
+
     def reset_counts(self):
         with self.lock:
             self.entry_count = 0
@@ -303,6 +312,8 @@ class CameraCounterThread(threading.Thread):
                 and self.latest_jpeg_bytes is not None
                 and (time.time() - self.last_frame_time) < 5.0
             )
+            entries = self.entry_count if self.count_traffic else 0
+            exits = self.exit_count if self.count_traffic else 0
             return {
                 "id": self.camera_id,
                 "camera_id": self.camera_id,
@@ -312,9 +323,10 @@ class CameraCounterThread(threading.Thread):
                 "channel": self.channel,
                 "lineY": self.line_y,
                 "line_y": self.line_y,
-                "entryCount": self.entry_count,
-                "exitCount": self.exit_count,
-                "liveCount": max(0, self.entry_count - self.exit_count),
+                "countTraffic": self.count_traffic,
+                "entryCount": entries,
+                "exitCount": exits,
+                "liveCount": max(0, entries - exits),
                 "peopleDetected": len(self.latest_points),
                 "isOnline": online,
                 "isStreaming": not self.stopped,
@@ -334,7 +346,8 @@ class CameraCounterThread(threading.Thread):
             self.track_states.pop(tid, None)
 
     def run(self):
-        print(f"Connecting to [{self.camera_id}] {self.display_name} ({self.ip})...")
+        mode_label = "ENTRANCE COUNTER + HEATMAP" if self.count_traffic else "INTERIOR HEATMAP ONLY"
+        print(f"Connecting to [{self.camera_id}] {self.display_name} ({self.ip}) [{mode_label}]...")
         stream = RTSPFrameGrabber(self.rtsp_url).start()
         last_grabbed_id = -1
 
@@ -361,8 +374,7 @@ class CameraCounterThread(threading.Thread):
                 with self.lock:
                     current_line_y = self.line_y
                     cam_name = self.display_name
-
-                cv2.line(display_frame, (0, current_line_y), (640, current_line_y), (255, 0, 0), 3)
+                    should_count = self.count_traffic
 
                 # HEATMAP: positions found in THIS frame
                 frame_points = []
@@ -419,40 +431,42 @@ class CameraCounterThread(threading.Thread):
                                     2,
                                 )
 
-                                if track_id not in self.track_states:
-                                    self.track_states[track_id] = {"last_direction": None}
+                                # Only Zone 1 (entrance/exit gate) counts entries & exits
+                                if should_count:
+                                    if track_id not in self.track_states:
+                                        self.track_states[track_id] = {"last_direction": None}
 
-                                if track_id in self.track_history:
-                                    prev_y = self.track_history[track_id]
-                                    last_dir = self.track_states[track_id]["last_direction"]
+                                    if track_id in self.track_history:
+                                        prev_y = self.track_history[track_id]
+                                        last_dir = self.track_states[track_id]["last_direction"]
 
-                                    if (
-                                        prev_y <= current_line_y
-                                        and center_y > current_line_y
-                                        and last_dir != "ENTRY"
-                                    ):
-                                        self.entry_count += 1
-                                        self.track_states[track_id]["last_direction"] = "ENTRY"
-                                        print(
-                                            f"[{self.camera_id} ENTRY] Person ID {track_id}. "
-                                            f"Total Entries: {self.entry_count}"
-                                        )
-                                        log_to_backend(self.camera_id, "ENTRY", track_id)
+                                        if (
+                                            prev_y <= current_line_y
+                                            and center_y > current_line_y
+                                            and last_dir != "ENTRY"
+                                        ):
+                                            self.entry_count += 1
+                                            self.track_states[track_id]["last_direction"] = "ENTRY"
+                                            print(
+                                                f"[{self.camera_id} ENTRY] Person ID {track_id}. "
+                                                f"Total Entries: {self.entry_count}"
+                                            )
+                                            log_to_backend(self.camera_id, "ENTRY", track_id)
 
-                                    elif (
-                                        prev_y >= current_line_y
-                                        and center_y < current_line_y
-                                        and last_dir != "EXIT"
-                                    ):
-                                        self.exit_count += 1
-                                        self.track_states[track_id]["last_direction"] = "EXIT"
-                                        print(
-                                            f"[{self.camera_id} EXIT] Person ID {track_id}. "
-                                            f"Total Exits: {self.exit_count}"
-                                        )
-                                        log_to_backend(self.camera_id, "EXIT", track_id)
+                                        elif (
+                                            prev_y >= current_line_y
+                                            and center_y < current_line_y
+                                            and last_dir != "EXIT"
+                                        ):
+                                            self.exit_count += 1
+                                            self.track_states[track_id]["last_direction"] = "EXIT"
+                                            print(
+                                                f"[{self.camera_id} EXIT] Person ID {track_id}. "
+                                                f"Total Exits: {self.exit_count}"
+                                            )
+                                            log_to_backend(self.camera_id, "EXIT", track_id)
 
-                                self.track_history[track_id] = center_y
+                                    self.track_history[track_id] = center_y
 
                     # HEATMAP: publish this frame's positions (empty list = nobody visible)
                     self.latest_points = frame_points
@@ -460,26 +474,8 @@ class CameraCounterThread(threading.Thread):
                     if self.processed_frames % 100 == 0:
                         self._prune_stale_tracks()
 
-                    entries = self.entry_count
-                    exits = self.exit_count
-
                 cv2.putText(
                     display_frame, cam_name, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
-                )
-                cv2.putText(
-                    display_frame, f"Entries: {entries}", (20, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
-                )
-                cv2.putText(
-                    display_frame, f"Exits: {exits}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2
-                )
-                cv2.putText(
-                    display_frame,
-                    f"Total Traffic: {entries + exits}",
-                    (20, 135),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (255, 255, 255),
-                    2,
                 )
 
                 ret, buffer = cv2.imencode(".jpg", display_frame)
@@ -573,6 +569,12 @@ def add_camera(camera: CameraCreate, request: Request):
         if cam_id in camera_threads:
             raise HTTPException(status_code=400, detail="Camera ID already exists.")
 
+    is_entrance = (
+        camera.count_traffic
+        if camera.count_traffic is not None
+        else (cam_id == "cam_1" or camera.ip.strip() == "192.168.1.51" or "entrance" in camera.name.lower())
+    )
+
     config = {
         "camera_id": cam_id,
         "name": camera.name,
@@ -581,6 +583,7 @@ def add_camera(camera: CameraCreate, request: Request):
         "pass": camera.pass_word or "",
         "channel": camera.channel or "102",
         "line_y": camera.line_y if camera.line_y is not None else 300,
+        "count_traffic": is_entrance,
     }
 
     t = CameraCounterThread(config)
@@ -613,7 +616,7 @@ def add_camera(camera: CameraCreate, request: Request):
 
 @app.patch("/api/cameras/{camera_id}")
 async def update_camera(camera_id: str, camera_update: CameraUpdate, request: Request):
-    """Updates properties such as the camera name or line_y position dynamically."""
+    """Updates properties such as the camera name, line_y, or count_traffic dynamically."""
     with threads_lock:
         thread = camera_threads.get(camera_id)
     if not thread:
@@ -623,6 +626,8 @@ async def update_camera(camera_id: str, camera_update: CameraUpdate, request: Re
         thread.set_name(camera_update.name)
     if camera_update.line_y is not None:
         thread.set_line_y(camera_update.line_y)
+    if camera_update.count_traffic is not None:
+        thread.set_count_traffic(camera_update.count_traffic)
 
     return thread.get_info(str(request.base_url))
 

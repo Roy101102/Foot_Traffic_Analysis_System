@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [serverMessage, setServerMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -16,7 +17,7 @@ export default function ForgotPasswordPage() {
     e.preventDefault();
     setError("");
 
-    if (!email) {
+    if (!email.trim()) {
       setError("Please enter your email address.");
       return;
     }
@@ -24,15 +25,24 @@ export default function ForgotPasswordPage() {
     setLoading(true);
 
     try {
-      // TODO: Replace with your real backend API endpoint
-      // await axios.post("/api/auth/forgot-password", { email });
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: email.trim() }),
+      });
 
-      // Simulated network delay
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to send reset link. Please try again.");
+      }
 
+      setServerMessage(
+        data.message || "If that email exists in our system, a password reset link has been sent."
+      );
       setIsSubmitted(true);
-    } catch (err) {
-      setError("Failed to send reset link. Please try again.");
+    } catch (err: any) {
+      setError(err?.message || "Failed to send reset link. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -74,9 +84,7 @@ export default function ForgotPasswordPage() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <p className="text-slate-300">
-                    We sent a password reset link to:
-                  </p>
+                  <p className="text-slate-300 text-sm">{serverMessage}</p>
                   <p className="text-white font-medium break-all">{email}</p>
                 </div>
                 <p className="text-xs text-slate-400">
@@ -121,10 +129,11 @@ export default function ForgotPasswordPage() {
                     <Input
                       id="email"
                       type="email"
-                      placeholder="admin@company.com"
+                      placeholder="admin@store.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       className="pl-10 bg-slate-800 border-slate-700 text-white"
+                      disabled={loading}
                       required
                     />
                   </div>

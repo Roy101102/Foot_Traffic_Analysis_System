@@ -1,5 +1,5 @@
-import { isAuthenticated } from "./auth";
 import { createBrowserRouter, redirect } from "react-router-dom";
+import { checkAuth, UserRole } from "./auth";
 import Layout from "./pages/Layout";
 import DashboardPage from "./pages/DashboardPage";
 import CamerasPage from "./pages/CamerasPage";
@@ -11,37 +11,67 @@ import LoginPage from "./pages/LoginPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 
+async function redirectIfAuthenticated() {
+  const user = await checkAuth();
+  return user ? redirect("/") : null;
+}
+
+async function requireAuth() {
+  const user = await checkAuth();
+  return user ? null : redirect("/login");
+}
+
+function requireRole(allowedRoles: UserRole[]) {
+  return async () => {
+    const user = await checkAuth();
+    if (!user) {
+      return redirect("/login");
+    }
+    if (!allowedRoles.includes(user.role)) {
+      return redirect("/");
+    }
+    return null;
+  };
+}
+
 export const router = createBrowserRouter([
   {
     path: "/login",
     element: <LoginPage />,
-    loader: () => (isAuthenticated() ? redirect("/") : null),
+    loader: redirectIfAuthenticated,
   },
   {
     path: "/forgot-password",
     element: <ForgotPasswordPage />,
-    loader: () => (isAuthenticated() ? redirect("/") : null),
+    loader: redirectIfAuthenticated,
   },
   {
     path: "/reset-password",
     element: <ResetPasswordPage />,
-    loader: () => (isAuthenticated() ? redirect("/") : null),
+    loader: redirectIfAuthenticated,
   },
   {
     path: "/",
     element: <Layout />,
-    loader: () => (!isAuthenticated() ? redirect("/login") : null),
+    loader: requireAuth,
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "cameras", element: <CamerasPage /> },
       { path: "traffic", element: <TrafficPage /> },
       { path: "conversion", element: <ConversionPage /> },
       { path: "reports", element: <ReportsPage /> },
-      { path: "settings", element: <SettingsPage /> },
+      {
+        path: "settings",
+        element: <SettingsPage />,
+        loader: requireRole(["admin"]),
+      },
     ],
   },
   {
     path: "*",
-    loader: () => redirect(isAuthenticated() ? "/" : "/login"),
+    loader: async () => {
+      const user = await checkAuth();
+      return redirect(user ? "/" : "/login");
+    },
   },
 ]);

@@ -32,6 +32,7 @@ export interface CameraCardProps {
   exitCount: number;
   isOnline: boolean;       // Network hardware status (Online/Offline)
   isStreaming?: boolean;   // Stream feed active status (defaults to true)
+  showMetrics?: boolean;   // Show Live Count, Entry, and Exit cards (defaults to entrance cameras only)
   location?: string;
   streamUrl?: string;
   onViewAnalytics?: () => void;
@@ -49,6 +50,7 @@ export function CameraCard({
   exitCount,
   isOnline,
   isStreaming = true,
+  showMetrics,
   location,
   streamUrl,
   onViewAnalytics,
@@ -63,6 +65,12 @@ export function CameraCard({
 
   // Feed is active ONLY when device is online AND streaming is enabled
   const isFeedActive = isOnline && isStreaming;
+
+  // Only show Live Count, Entry, and Exit for the Main Entrance Gate unless overridden
+  const shouldShowMetrics =
+    showMetrics !== undefined
+      ? showMetrics
+      : id === "cam_1" || name.toLowerCase().includes("entrance");
 
   // FastAPI / OpenCV MJPEG stream URL endpoint matching backend camera ID
   const rawStreamUrl = streamUrl || `http://127.0.0.1:8000/api/video_feed/${id}`;
@@ -102,24 +110,26 @@ export function CameraCard({
         <div className="space-y-4">
           
           {/* Header Bar */}
-          <div className="flex items-start justify-between">
-            <div className="space-y-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="space-y-1 min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-white">{name}</h3>
+                <h3 className="font-semibold text-white truncate" title={name}>
+                  {name}
+                </h3>
                 
                 {/* Hardware Network Connection Badge */}
                 <Badge
                   variant={isOnline ? "default" : "destructive"}
                   className={
                     isOnline 
-                      ? "bg-green-500/20 text-green-500 border-none" 
-                      : "bg-red-500/20 text-red-500 border-none"
+                      ? "bg-green-500/20 text-green-500 border-none shrink-0" 
+                      : "bg-red-500/20 text-red-500 border-none shrink-0"
                   }
                 >
                   {isOnline ? "Online" : "Offline"}
                 </Badge>
               </div>
-              {location && <p className="text-sm text-slate-400 font-mono">{location}</p>}
+              {location && <p className="text-sm text-slate-400 font-mono truncate">{location}</p>}
             </div>
 
             {/* Actions Menu */}
@@ -128,7 +138,8 @@ export function CameraCard({
                 <Button 
                   variant="ghost" 
                   size="sm" 
-                  className="text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+                  onClick={(e) => e.stopPropagation()}
+                  className="text-slate-400 hover:text-slate-200 hover:bg-slate-700/50 shrink-0"
                 >
                   <Settings2 className="h-4 w-4" />
                 </Button>
@@ -162,10 +173,12 @@ export function CameraCard({
                   )}
                 </DropdownMenuItem>
 
-                <DropdownMenuItem onClick={onResetCounts} className="hover:bg-slate-800 focus:bg-slate-800 cursor-pointer">
-                  <RefreshCw className="h-4 w-4 mr-2 text-teal-400" />
-                  Reset Metrics
-                </DropdownMenuItem>
+                {shouldShowMetrics && (
+                  <DropdownMenuItem onClick={onResetCounts} className="hover:bg-slate-800 focus:bg-slate-800 cursor-pointer">
+                    <RefreshCw className="h-4 w-4 mr-2 text-teal-400" />
+                    Reset Metrics
+                  </DropdownMenuItem>
+                )}
 
                 <DropdownMenuSeparator className="bg-slate-800" />
 
@@ -274,27 +287,29 @@ export function CameraCard({
             )}
           </div>
 
-          {/* Stats Metrics */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
-              <p className="text-xs text-slate-400 mb-1">Live Count</p>
-              <p className="text-xl font-bold text-white">{isFeedActive ? liveCount : 0}</p>
-            </div>
-            <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
-              <div className="flex items-center gap-1 mb-1">
-                <ArrowUpRight className="h-3 w-3 text-green-500" />
-                <p className="text-xs text-slate-400">Entry</p>
+          {/* Stats Metrics (Main Entrance Gate Only) */}
+          {shouldShowMetrics && (
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+                <p className="text-xs text-slate-400 mb-1">Live Count</p>
+                <p className="text-xl font-bold text-white">{isFeedActive ? liveCount : 0}</p>
               </div>
-              <p className="text-xl font-bold text-green-500">{isFeedActive ? entryCount : 0}</p>
-            </div>
-            <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
-              <div className="flex items-center gap-1 mb-1">
-                <ArrowDownRight className="h-3 w-3 text-orange-500" />
-                <p className="text-xs text-slate-400">Exit</p>
+              <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+                <div className="flex items-center gap-1 mb-1">
+                  <ArrowUpRight className="h-3 w-3 text-green-500" />
+                  <p className="text-xs text-slate-400">Entry</p>
+                </div>
+                <p className="text-xl font-bold text-green-500">{isFeedActive ? entryCount : 0}</p>
               </div>
-              <p className="text-xl font-bold text-orange-500">{isFeedActive ? exitCount : 0}</p>
+              <div className="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+                <div className="flex items-center gap-1 mb-1">
+                  <ArrowDownRight className="h-3 w-3 text-orange-500" />
+                  <p className="text-xs text-slate-400">Exit</p>
+                </div>
+                <p className="text-xl font-bold text-orange-500">{isFeedActive ? exitCount : 0}</p>
+              </div>
             </div>
-          </div>
+          )}
 
         </div>
       </CardContent>

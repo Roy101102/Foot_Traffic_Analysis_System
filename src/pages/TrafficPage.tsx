@@ -607,13 +607,22 @@ export default function TrafficPage() {
       {/* Tabs for Time Periods with onValueChange */}
       <Tabs defaultValue="daily" onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-slate-800 border border-slate-700">
-          <TabsTrigger value="daily" className="data-[state=active]:bg-blue-600">
+          <TabsTrigger
+            value="daily"
+            className="text-slate-300 hover:text-white data-[state=active]:bg-blue-600 data-[state=active]:text-white cursor-pointer"
+          >
             Daily
           </TabsTrigger>
-          <TabsTrigger value="weekly" className="data-[state=active]:bg-blue-600">
+          <TabsTrigger
+            value="weekly"
+            className="text-slate-300 hover:text-white data-[state=active]:bg-blue-600 data-[state=active]:text-white cursor-pointer"
+          >
             Weekly
           </TabsTrigger>
-          <TabsTrigger value="monthly" className="data-[state=active]:bg-blue-600">
+          <TabsTrigger
+            value="monthly"
+            className="text-slate-300 hover:text-white data-[state=active]:bg-blue-600 data-[state=active]:text-white cursor-pointer"
+          >
             Monthly
           </TabsTrigger>
         </TabsList>
@@ -685,7 +694,7 @@ export default function TrafficPage() {
         </TabsContent>
 
         <TabsContent value="monthly" className="space-y-6">
-          <TrafficChart
+          <TrafficChart 
             title="Monthly Traffic Trend"
             data={monthlyData}
             type="line"

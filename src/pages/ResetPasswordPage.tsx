@@ -9,7 +9,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 export default function ResetPasswordPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const token = searchParams.get("token"); // Extracts ?token= from email link
+  const token = searchParams.get("token");
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -20,6 +20,11 @@ export default function ResetPasswordPage() {
   const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (!token) {
+      setError("Missing password reset token. Please request a new reset link.");
+      return;
+    }
 
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
@@ -34,13 +39,24 @@ export default function ResetPasswordPage() {
     setLoading(true);
 
     try {
-      // TODO: Replace with your real backend endpoint
-      // await axios.post("/api/auth/reset-password", { token, password });
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          token,
+          new_password: password,
+        }),
+      });
 
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to update password. Link may have expired.");
+      }
+
       setIsSuccess(true);
-    } catch (err) {
-      setError("Failed to update password. Link may have expired.");
+    } catch (err: any) {
+      setError(err?.message || "Failed to update password. Link may have expired.");
     } finally {
       setLoading(false);
     }
@@ -85,7 +101,7 @@ export default function ResetPasswordPage() {
                   Your password has been successfully reset. You can now sign in with your new credentials.
                 </p>
                 <Button
-                  onClick={() => navigate("/login")}
+                  onClick={() => navigate("/login", { replace: true })}
                   className="w-full bg-blue-600 hover:bg-blue-700 text-white"
                 >
                   Sign In Now
@@ -93,6 +109,15 @@ export default function ResetPasswordPage() {
               </div>
             ) : (
               <form onSubmit={handleReset} className="space-y-6">
+                {!token && (
+                  <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-sm text-amber-300 space-y-1">
+                    <p>This reset link is missing a valid token.</p>
+                    <Link to="/forgot-password" className="underline text-blue-400 hover:text-blue-300">
+                      Request a new reset link
+                    </Link>
+                  </div>
+                )}
+
                 {error && (
                   <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center gap-2 text-sm text-red-400">
                     <AlertCircle className="h-4 w-4 flex-shrink-0" />
@@ -113,6 +138,7 @@ export default function ResetPasswordPage() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       className="pl-10 bg-slate-800 border-slate-700 text-white"
+                      disabled={loading || !token}
                       required
                     />
                   </div>
@@ -131,6 +157,7 @@ export default function ResetPasswordPage() {
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       className="pl-10 bg-slate-800 border-slate-700 text-white"
+                      disabled={loading || !token}
                       required
                     />
                   </div>
@@ -138,8 +165,8 @@ export default function ResetPasswordPage() {
 
                 <Button
                   type="submit"
-                  disabled={loading}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  disabled={loading || !token}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
                 >
                   {loading ? "Updating Password..." : "Reset Password"}
                 </Button>

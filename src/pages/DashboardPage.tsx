@@ -946,7 +946,7 @@ export default function DashboardPage() {
         )}
 
         {/* Camera Live Stream Grid (excludes the currently expanded camera so only 1 MJPEG connection runs per feed) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
           {cameras
             .filter((camera: any) => (camera.id || camera.name) !== expandedCameraId)
             .map((camera: any) => {
@@ -979,7 +979,10 @@ export default function DashboardPage() {
                   </div>
 
                   {/* Existing CameraCard */}
-                  <CameraCard {...camera} />
+                  <CameraCard
+                    {...camera}
+                    showMetrics={isEntranceCam(camera)}
+                  />
                 </div>
               );
             })}
@@ -988,4 +991,4 @@ export default function DashboardPage() {
 
     </div>
   );
-}   
+}

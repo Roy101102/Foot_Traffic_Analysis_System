@@ -1,3 +1,5 @@
+import sys
+from pathlib import Path
 import mysql.connector
 from mysql.connector import Error
 import requests
@@ -7,6 +9,19 @@ from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+# Automatically locate auth_routes.py and its parent directory inside the project
+BASE_DIR = Path(__file__).resolve().parent
+auth_matches = list(BASE_DIR.rglob("auth_routes.py"))
+if not auth_matches:
+    raise FileNotFoundError(f"Could not find auth_routes.py anywhere inside {BASE_DIR}")
+
+AUTH_DIR = auth_matches[0].parent
+for path_to_add in (str(AUTH_DIR), str(AUTH_DIR.parent)):
+    if path_to_add not in sys.path:
+        sys.path.insert(0, path_to_add)
+
+from auth_routes import router as auth_router
+
 # ------------------------------------------------------------------
 # 1. FASTAPI APP & CORS INITIALIZATION
 # ------------------------------------------------------------------
@@ -14,11 +29,17 @@ app = FastAPI(title="Mr. DIY Foot Traffic Analytics API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register authentication & user management endpoints (/api/auth/*)
+app.include_router(auth_router)
 
 STREAM_SERVER_URL = "http://127.0.0.1:8001"
 
@@ -183,22 +204,23 @@ def fetch_dashboard_stats():
             row["camera_id"]: {
                 "entries": int(row["entries"] or 0),
                 "exits": int(row["exits"] or 0),
-                "detected": max(0, int(row["entries"] or 0) - int(row["exits"] or 0))
+                "detected": max(0, int(row["entries"] or 0) - int(row["exits"] or 0)),
             }
-            for row in cam_rows if row["camera_id"]
+            for row in cam_rows
+            if row["camera_id"]
         }
 
         cameras_status = []
         zone_names = {
             "cam_1": "Zone 1: Main Entrance & Exit Gate",
             "cam_2": "Zone 2: Aisle 1 (Hardware & Tools)",
-            "cam_3": "Zone 3: Aisle 2 (Household & Electrical)"
+            "cam_3": "Zone 3: Aisle 2 (Household & Electrical)",
         }
 
         for cam_id in ["cam_1", "cam_2", "cam_3"]:
             is_online = active_cameras_map.get(cam_id, False)
             stats = cam_stats_map.get(cam_id, {"entries": 0, "exits": 0, "detected": 0})
-            
+
             cameras_status.append({
                 "id": cam_id,
                 "name": zone_names.get(cam_id, cam_id),
@@ -211,7 +233,7 @@ def fetch_dashboard_stats():
                 "visitors": stats["detected"],
                 "liveCount": stats["detected"],
                 "entryCount": stats["entries"],
-                "exitCount": stats["exits"]
+                "exitCount": stats["exits"],
             })
 
         return {
@@ -224,7 +246,7 @@ def fetch_dashboard_stats():
             },
             "hourly_trends": hourly_trends,
             "cameras": cameras_status,
-            "zones": cameras_status
+            "zones": cameras_status,
         }
 
     except Error as e:
@@ -257,4 +279,4 @@ async def get_dashboard_stats():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)     
+    uvicorn.run(app, host="0.0.0.0", port=8000)
