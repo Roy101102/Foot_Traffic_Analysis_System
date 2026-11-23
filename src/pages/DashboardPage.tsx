@@ -63,9 +63,16 @@ const getTrafficBadgeStyle = (level: TrafficLevel) => {
   }
 };
 
-// Route MJPEG stream URLs through Vite's /streamer proxy so they work over HTTPS tunnels
+// Resolve MJPEG stream URL directly to port 8001 for desktop playback
 const normalizeStreamUrl = (rawUrl: string | undefined, camId: string) => {
-  if (!rawUrl || rawUrl.startsWith("/streamer/") || rawUrl.startsWith("/api/")) {
+  if (
+    !rawUrl ||
+    rawUrl.startsWith("/streamer/") ||
+    rawUrl.startsWith("/api/") ||
+    rawUrl.includes("127.0.0.1:8000") ||
+    rawUrl.includes("localhost:8000") ||
+    rawUrl.includes("localhost:8001")
+  ) {
     return `http://127.0.0.1:8001/api/video_feed/${camId}`;
   }
   return rawUrl;
@@ -94,11 +101,19 @@ export default function DashboardPage() {
 
   // Expanded camera state for the Camera Monitoring section
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
+  const [expandedRetryKey, setExpandedRetryKey] = useState<number>(1);
+  const [expandedUseFallback, setExpandedUseFallback] = useState<boolean>(false);
   const cameraSectionRef = useRef<HTMLDivElement | null>(null);
 
   const totalEntries = liveTraffic?.summary?.total_entries ?? 0;
   const totalExits = liveTraffic?.summary?.total_exits ?? 0;
   const occupancy = liveTraffic?.summary?.current_occupancy ?? 0;
+
+  // Reset stream connection key whenever a new zone is expanded
+  useEffect(() => {
+    setExpandedUseFallback(false);
+    setExpandedRetryKey((prev) => prev + 1);
+  }, [expandedCameraId]);
 
   // Allow pressing Escape to collapse the expanded camera feed
   useEffect(() => {
@@ -997,9 +1012,24 @@ export default function DashboardPage() {
             <div className="relative w-full bg-black flex items-center justify-center aspect-video max-h-[540px]">
               {expandedCamera.isOnline ? (
                 <img
-                  src={expandedCamera.streamUrl}
+                  key={`expanded-${expandedCamera.id}-${expandedUseFallback}-${expandedRetryKey}`}
+                  src={
+                    expandedUseFallback
+                      ? `/streamer/api/video_feed/${expandedCamera.id}?_t=${expandedRetryKey}`
+                      : `${normalizeStreamUrl(expandedCamera.streamUrl, expandedCamera.id)}?_t=${expandedRetryKey}`
+                  }
                   alt={`${getCameraZoneLabel(expandedCamera)} Live Feed`}
                   className="w-full h-full object-contain"
+                  onError={() => {
+                    if (!expandedUseFallback) {
+                      setExpandedUseFallback(true);
+                    } else {
+                      setTimeout(() => {
+                        setExpandedUseFallback(false);
+                        setExpandedRetryKey((prev) => prev + 1);
+                      }, 2000);
+                    }
+                  }}
                 />
               ) : (
                 <div className="flex flex-col items-center justify-center text-slate-500 py-16 gap-2">
@@ -1061,4 +1091,6 @@ export default function DashboardPage() {
 
     </div>
   );
-}
+}git add .
+git commit -m "Fix expanded camera stream URL and reconnect"
+git push
