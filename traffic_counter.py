@@ -6,6 +6,7 @@ import urllib.parse
 import requests
 import threading
 import numpy as np
+import torch
 from contextlib import asynccontextmanager
 from typing import Dict, Optional
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from heatmap_history import heatmap_store, history_router
 
 # Low-latency RTSP options for OpenCV
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|fflags;nobuffer|max_delay;0"
@@ -31,6 +33,68 @@ http_session = requests.Session()
 camera_threads: Dict[str, "CameraCounterThread"] = {}
 threads_lock = threading.Lock()
 model_load_lock = threading.Lock()
+
+
+# ============================================================
+# DETECTION TUNING  (every value can be overridden with an environment variable)
+# ============================================================
+# Examples (Windows cmd):   set YOLO_MODEL=yolov8m.pt
+#                           set YOLO_CONF=0.10
+# The defaults below favour DETECTING EVERY PERSON quickly. If the video becomes
+# too slow, use a smaller model (yolov8n.pt) or a smaller YOLO_IMGSZ (480).
+
+HAS_CUDA = torch.cuda.is_available()
+DEVICE = 0 if HAS_CUDA else "cpu"
+
+# Bigger model = finds more people (n < s < m < l < x). GPU: medium, CPU: small.
+YOLO_MODEL = os.getenv("YOLO_MODEL", "yolov8m.pt" if HAS_CUDA else "yolov8s.pt")
+
+# Detection resolution. The old value was 320, which made people tiny and hard to find.
+YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
+
+# Minimum confidence to accept a detection. Lower = more people found, but more false alarms.
+# (default YOLO value is 0.25)
+YOLO_CONF = float(os.getenv("YOLO_CONF", "0.15"))
+YOLO_IOU = float(os.getenv("YOLO_IOU", "0.6"))
+
+# Boost contrast before detecting (helps dark scenes and grey night/IR images).
+ENHANCE_CONTRAST = os.getenv("ENHANCE_CONTRAST", "1") != "0"
+
+# A person is shown / added to the heatmap after this many frames (1 = immediately).
+MIN_SHOW_FRAMES = int(os.getenv("MIN_SHOW_FRAMES", "1"))
+# Entry/exit is only COUNTED after the track has lasted this many frames (stops one-frame ghosts).
+MIN_COUNT_FRAMES = int(os.getenv("MIN_COUNT_FRAMES", "3"))
+
+# Large camera frames are shrunk to this longest side before detection (saves time).
+MAX_INFER_SIDE = int(os.getenv("MAX_INFER_SIDE", "1280"))
+
+# Tracker settings, written to a file next to this script. Weak detections (just above
+# YOLO_CONF) keep an existing person tracked; a NEW person starts at YOLO_CONF + 0.05.
+TRACKER_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bytetrack_sensitive.yaml")
+
+
+def write_tracker_config() -> str:
+    high = round(YOLO_CONF + 0.05, 2)
+    low = max(0.05, round(YOLO_CONF - 0.05, 2))
+    content = (
+        "tracker_type: bytetrack\n"
+        f"track_high_thresh: {high}\n"
+        f"track_low_thresh: {low}\n"
+        f"new_track_thresh: {high}\n"
+        "track_buffer: 60\n"        # keep a lost person's ID for ~60 frames
+        "match_thresh: 0.8\n"
+        "fuse_score: True\n"
+    )
+    try:
+        with open(TRACKER_FILE, "w", encoding="utf-8") as f:
+            f.write(content)
+        return TRACKER_FILE
+    except OSError as e:
+        print(f"[DETECTOR] Could not write {TRACKER_FILE} ({e}). Using the default bytetrack.yaml.")
+        return "bytetrack.yaml"
+
+
+TRACKER_CONFIG = write_tracker_config()
 
 
 # ============================================================
@@ -98,7 +162,7 @@ DEFAULT_CAMERAS = [
     {
         "camera_id": "cam_1",
         "name": "Zone 1: Main Entrance Gate",
-        "ip": "192.168.1.51",
+        "ip": "172.16.32.97",
         "user": "admin",
         "pass": CAM_PASS,
         "channel": "102",
@@ -108,7 +172,7 @@ DEFAULT_CAMERAS = [
     {
         "camera_id": "cam_2",
         "name": "Zone 2: Hardware & Tools Aisle",
-        "ip": "192.168.1.52",
+        "ip": "172.16.32.100",
         "user": "admin",
         "pass": CAM_PASS,
         "channel": "102",
@@ -118,7 +182,7 @@ DEFAULT_CAMERAS = [
     {
         "camera_id": "cam_3",
         "name": "Zone 3: Household & Electrical Aisle",
-        "ip": "192.168.1.53",
+        "ip": "172.16.32.111",
         "user": "admin",
         "pass": CAM_PASS,
         "channel": "102",
@@ -234,7 +298,7 @@ class CameraCounterThread(threading.Thread):
         else:
             self.count_traffic = (
                 self.camera_id == "cam_1"
-                or self.ip.strip() == "192.168.1.51"
+                or self.ip.strip() == "172.16.32.100"
                 or "entrance" in self.display_name.lower()
             )
 
@@ -247,10 +311,6 @@ class CameraCounterThread(threading.Thread):
             f"rtsp://{self.user}:{encoded_pass}@{self.ip}:554/Streaming/Channels/{self.channel}"
         )
 
-        # Serialize model initialization to avoid concurrent file/weights access
-        with model_load_lock:
-            self.model = YOLO("yolov8n.pt")
-
         self.entry_count = 0
         self.exit_count = 0
         self.track_history: Dict[int, int] = {}
@@ -258,6 +318,16 @@ class CameraCounterThread(threading.Thread):
         self.track_last_seen: Dict[int, int] = {}
         self.track_states: Dict[int, dict] = {}
         self.processed_frames = 0
+        self.detect_fps = 0.0
+
+        # Per-thread contrast enhancer (OpenCV CLAHE objects are not thread-safe)
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+        # Serialize model initialization to avoid concurrent file/weights access.
+        # The warm-up runs one dummy frame so the FIRST real frame is not slow.
+        with model_load_lock:
+            self.model = YOLO(YOLO_MODEL)
+            self._warm_up()
 
         # ---- HEATMAP: latest floor-plan positions + homography for this camera ----
         self.latest_points: list = []
@@ -267,6 +337,38 @@ class CameraCounterThread(threading.Thread):
             if cal
             else None
         )
+
+    # ---------------- detection helpers ----------------
+
+    def _infer(self, image):
+        return self.model.track(
+            image,
+            persist=True,
+            classes=[0],              # person only
+            imgsz=YOLO_IMGSZ,
+            conf=YOLO_CONF,
+            iou=YOLO_IOU,
+            tracker=TRACKER_CONFIG,
+            device=DEVICE,
+            agnostic_nms=True,
+            max_det=50,
+            verbose=False,
+        )
+
+    def _warm_up(self):
+        try:
+            self._infer(np.zeros((480, 640, 3), dtype=np.uint8))
+        except Exception as e:
+            print(f"[{self.camera_id}] Model warm-up skipped: {e}")
+
+    def _enhance(self, image):
+        """CLAHE on the brightness channel only: more contrast, same colours."""
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        l_chan, a_chan, b_chan = cv2.split(lab)
+        l_chan = self.clahe.apply(l_chan)
+        return cv2.cvtColor(cv2.merge((l_chan, a_chan, b_chan)), cv2.COLOR_LAB2BGR)
+
+    # ---------------- controls ----------------
 
     def set_name(self, name: str):
         with self.lock:
@@ -328,6 +430,7 @@ class CameraCounterThread(threading.Thread):
                 "exitCount": exits,
                 "liveCount": max(0, entries - exits),
                 "peopleDetected": len(self.latest_points),
+                "detectFps": round(self.detect_fps, 1),
                 "isOnline": online,
                 "isStreaming": not self.stopped,
                 "streamUrl": f"{clean_base}/api/video_feed/{self.camera_id}",
@@ -361,15 +464,33 @@ class CameraCounterThread(threading.Thread):
                 last_grabbed_id = frame_id
                 self.processed_frames += 1
 
+                # Everything the dashboard uses (line_y, floor calibration) lives in 640x480
                 display_frame = cv2.resize(frame, (640, 480))
 
-                results = self.model.track(
-                    display_frame,
-                    persist=True,
-                    classes=[0],
-                    imgsz=320,
-                    verbose=False,
-                )
+                # Detect on the ORIGINAL frame (more pixels per person than a 640x480 copy),
+                # shrunk only if it is huge. Boxes are scaled back to 640x480 below.
+                infer_frame = frame
+                h, w = frame.shape[:2]
+                if max(h, w) > MAX_INFER_SIDE:
+                    k = MAX_INFER_SIDE / float(max(h, w))
+                    infer_frame = cv2.resize(
+                        frame, (int(w * k), int(h * k)), interpolation=cv2.INTER_AREA
+                    )
+                ih, iw = infer_frame.shape[:2]
+                scale = np.array([640.0 / iw, 480.0 / ih, 640.0 / iw, 480.0 / ih], dtype=np.float32)
+
+                if ENHANCE_CONTRAST:
+                    infer_frame = self._enhance(infer_frame)
+
+                t0 = time.time()
+                results = self._infer(infer_frame)
+                dt = max(1e-3, time.time() - t0)
+                self.detect_fps = (0.8 * self.detect_fps + 0.2 / dt) if self.detect_fps else (1.0 / dt)
+                if self.processed_frames % 300 == 0:
+                    print(
+                        f"[{self.camera_id}] detector at {self.detect_fps:.1f} FPS "
+                        f"({YOLO_MODEL}, imgsz={YOLO_IMGSZ}, conf={YOLO_CONF})"
+                    )
 
                 with self.lock:
                     current_line_y = self.line_y
@@ -381,10 +502,11 @@ class CameraCounterThread(threading.Thread):
 
                 with self.lock:
                     if results and results[0].boxes is not None and results[0].boxes.id is not None:
-                        boxes = results[0].boxes.xyxy.cpu().numpy()
+                        boxes = results[0].boxes.xyxy.cpu().numpy() * scale
+                        confs = results[0].boxes.conf.cpu().numpy()
                         track_ids = results[0].boxes.id.cpu().numpy().astype(int)
 
-                        for box, track_id in zip(boxes, track_ids):
+                        for box, conf, track_id in zip(boxes, confs, track_ids):
                             x1, y1, x2, y2 = box
                             center_x = int((x1 + x2) / 2)
                             center_y = int((y1 + y2) / 2)
@@ -393,8 +515,10 @@ class CameraCounterThread(threading.Thread):
                             self.track_frame_counters[track_id] = (
                                 self.track_frame_counters.get(track_id, 0) + 1
                             )
+                            frames_seen = self.track_frame_counters[track_id]
 
-                            if self.track_frame_counters[track_id] > 2:
+                            # People are SHOWN straight away (MIN_SHOW_FRAMES=1)...
+                            if frames_seen >= MIN_SHOW_FRAMES:
                                 # ---- HEATMAP: foot point (bottom-center of box) -> floor plan ----
                                 foot_x = int((x1 + x2) / 2)
                                 foot_y = int(y2)
@@ -406,6 +530,7 @@ class CameraCounterThread(threading.Thread):
                                             {
                                                 "x": float(fx),
                                                 "y": float(fy),
+                                                "frames": int(frames_seen),
                                                 "camera_id": self.camera_id,
                                                 "track_id": int(track_id),
                                             }
@@ -423,7 +548,7 @@ class CameraCounterThread(threading.Thread):
                                 cv2.circle(display_frame, (center_x, center_y), 5, (0, 0, 255), -1)
                                 cv2.putText(
                                     display_frame,
-                                    f"ID: {track_id}",
+                                    f"ID: {track_id} {conf:.2f}",
                                     (int(x1), max(15, int(y1) - 10)),
                                     cv2.FONT_HERSHEY_SIMPLEX,
                                     0.6,
@@ -436,7 +561,11 @@ class CameraCounterThread(threading.Thread):
                                     if track_id not in self.track_states:
                                         self.track_states[track_id] = {"last_direction": None}
 
-                                    if track_id in self.track_history:
+                                    # ...but only COUNTED once the track is stable (MIN_COUNT_FRAMES)
+                                    if (
+                                        frames_seen >= MIN_COUNT_FRAMES
+                                        and track_id in self.track_history
+                                    ):
                                         prev_y = self.track_history[track_id]
                                         last_dir = self.track_states[track_id]["last_direction"]
 
@@ -474,6 +603,9 @@ class CameraCounterThread(threading.Thread):
                     if self.processed_frames % 100 == 0:
                         self._prune_stale_tracks()
 
+                # Save this frame's positions for the historical heatmap (throttled inside)
+                heatmap_store.record(self.camera_id, frame_points)
+
                 cv2.putText(
                     display_frame, cam_name, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2
                 )
@@ -496,6 +628,7 @@ class CameraCounterThread(threading.Thread):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    heatmap_store.start()
     print("============================================================")
     print("MR. DIY MULTI-CAMERA REAL-TIME FOOT TRAFFIC SYSTEM")
     print("============================================================")
@@ -503,6 +636,10 @@ async def lifespan(app: FastAPI):
     print("Stream endpoints live at: http://<server-ip>:8001/api/video_feed/cam_X")
     print("Heatmap points at:        http://127.0.0.1:8001/api/heatmap_points")
     print(f"Database Events posting to: {API_URL}")
+    print(
+        f"Detector: {YOLO_MODEL} | imgsz={YOLO_IMGSZ} | conf={YOLO_CONF} | "
+        f"device={'GPU' if HAS_CUDA else 'CPU'} | contrast boost={'on' if ENHANCE_CONTRAST else 'off'}"
+    )
     print("============================================================")
 
     with threads_lock:
@@ -516,6 +653,7 @@ async def lifespan(app: FastAPI):
     yield
 
     print("\n[SYSTEM] Shutting down camera streams...")
+    heatmap_store.stop()
     with threads_lock:
         for t in camera_threads.values():
             t.stop()
@@ -523,6 +661,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="MR. DIY Live Video Streamer API", lifespan=lifespan)
+app.include_router(history_router)   # /api/heatmap_history (saved heatmap by day/week/month)
 
 app.add_middleware(
     CORSMiddleware,
@@ -572,7 +711,7 @@ def add_camera(camera: CameraCreate, request: Request):
     is_entrance = (
         camera.count_traffic
         if camera.count_traffic is not None
-        else (cam_id == "cam_1" or camera.ip.strip() == "192.168.1.51" or "entrance" in camera.name.lower())
+        else (cam_id == "cam_1" or camera.ip.strip() == "172.16.32.100" or "entrance" in camera.name.lower())
     )
 
     config = {

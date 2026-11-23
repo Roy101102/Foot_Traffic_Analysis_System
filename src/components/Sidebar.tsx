@@ -8,6 +8,9 @@ import {
   Settings,
   Menu,
   LogOut,
+  QrCode,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import {
@@ -20,19 +23,56 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "./ui/alert-dialog";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "./ui/utils";
 import { logout, useCurrentUser, UserRole } from "../auth";
+import { CustomerQrModal } from "./CustomerQrModal";
 
 interface SidebarProps {
   userRole?: UserRole;
   alertCount?: number;
+  collapsed?: boolean;
+  onToggleCollapse?: (collapsed: boolean) => void;
 }
 
-export function Sidebar({ userRole = "viewer" }: SidebarProps) {
+export function Sidebar({
+  userRole = "viewer",
+  collapsed: controlledCollapsed,
+  onToggleCollapse,
+}: SidebarProps) {
   const navigate = useNavigate();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [internalCollapsed, setInternalCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("sidebarCollapsed") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const isCollapsed = controlledCollapsed ?? internalCollapsed;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("sidebarCollapsed", String(isCollapsed));
+    } catch {
+      // ignore storage errors
+    }
+    window.dispatchEvent(
+      new CustomEvent("sidebar-collapse-change", { detail: { collapsed: isCollapsed } })
+    );
+  }, [isCollapsed]);
+
+  const handleToggleCollapse = () => {
+    const next = !isCollapsed;
+    if (onToggleCollapse) {
+      onToggleCollapse(next);
+    } else {
+      setInternalCollapsed(next);
+    }
+  };
 
   const user = useCurrentUser();
   const effectiveRole: UserRole = user?.role ?? userRole;
@@ -58,70 +98,138 @@ export function Sidebar({ userRole = "viewer" }: SidebarProps) {
     navigate("/login", { replace: true });
   };
 
-  const SidebarContent = () => (
+  const SidebarContent = ({ compact = false }: { compact?: boolean }) => (
     <>
-      <div className="p-6 border-b border-slate-700">
-        <div className="flex items-center gap-3">
-          <div className="h-15 w-15 rounded-lg flex items-center justify-center">
+      {/* Brand Header */}
+      <div
+        className={cn(
+          "border-b border-slate-700 flex items-center",
+          compact ? "p-4 justify-center" : "p-6 justify-between gap-2"
+        )}
+      >
+        <div className={cn("flex items-center", compact ? "justify-center" : "gap-3 min-w-0")}>
+          <div className={cn("rounded-lg flex items-center justify-center shrink-0", compact ? "h-10 w-10" : "h-12 w-12")}>
             <img
               src="images/Logo_DIY.png"
               alt="logo"
               className="h-full w-full object-contain"
             />
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-white">FootTraffic AI</h1>
-            <p className="text-xs text-slate-400">YOLOv8 Analytics</p>
-          </div>
+          {!compact && (
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold text-white truncate">FootTraffic AI</h1>
+              <p className="text-xs text-slate-400 truncate">YOLOv8 Analytics</p>
+            </div>
+          )}
         </div>
+
+        {/* Desktop Collapse Button (when expanded) */}
+        {!compact && (
+          <button
+            type="button"
+            onClick={handleToggleCollapse}
+            title="Collapse sidebar"
+            className="hidden lg:flex items-center justify-center p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
-      <nav className="flex-1 p-4 space-y-1">
+      {/* Expand Button Bar (when collapsed on desktop) */}
+      {compact && (
+        <div className="hidden lg:flex justify-center pt-3 px-2">
+          <button
+            type="button"
+            onClick={handleToggleCollapse}
+            title="Expand sidebar"
+            className="w-full flex items-center justify-center py-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </div>
+      )}
+
+      {/* Navigation Links */}
+      <nav className={cn("flex-1 space-y-1", compact ? "p-2.5" : "p-4")}>
         {visibleNavigation.map((item) => (
           <NavLink
             key={item.name}
             to={item.href}
             end={item.href === "/"}
             onClick={() => setIsMobileOpen(false)}
+            title={compact ? item.name : undefined}
             className={({ isActive }) =>
               cn(
-                "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors group",
+                "flex items-center rounded-lg transition-colors group",
+                compact ? "justify-center px-2 py-3" : "gap-3 px-4 py-3",
                 isActive
                   ? "bg-blue-500/20 text-blue-500"
                   : "text-slate-300 hover:bg-slate-800 hover:text-white"
               )
             }
           >
-            <item.icon className="h-5 w-5" />
-            <span className="flex-1">{item.name}</span>
+            <item.icon className="h-5 w-5 shrink-0" />
+            {!compact && <span className="flex-1 truncate">{item.name}</span>}
           </NavLink>
         ))}
+
+        {/* Customer QR Trigger */}
+        <div className="pt-3 mt-3 border-t border-slate-800">
+          <button
+            type="button"
+            onClick={() => {
+              setIsMobileOpen(false);
+              setShowQrModal(true);
+            }}
+            title={compact ? "Customer QR" : undefined}
+            className={cn(
+              "w-full flex items-center rounded-lg transition-colors text-slate-300 hover:bg-slate-800 hover:text-white cursor-pointer",
+              compact ? "justify-center px-2 py-3" : "gap-3 px-4 py-3"
+            )}
+          >
+            <QrCode className="h-5 w-5 text-blue-400 shrink-0" />
+            {!compact && <span className="flex-1 text-left truncate">Customer QR</span>}
+          </button>
+        </div>
       </nav>
 
       {/* User Profile & Logout Section */}
-      <div className="p-4 border-t border-slate-700">
-        <div className="flex items-center gap-3 px-4 py-3 mb-2">
+      <div className={cn("border-t border-slate-700", compact ? "p-2.5" : "p-4")}>
+        <div
+          title={compact ? `${displayName} (${effectiveRole})` : undefined}
+          className={cn(
+            "flex items-center mb-2",
+            compact ? "justify-center py-2" : "gap-3 px-4 py-3"
+          )}
+        >
           <div className="h-10 w-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center font-bold text-white uppercase text-sm flex-shrink-0">
             {displayName.charAt(0)}
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-white truncate" title={displayEmail || displayName}>
-              {displayName}
-            </p>
-            <p className="text-xs text-slate-400 truncate" title={displayEmail}>
-              {displayEmail ? `${displayEmail} • ` : ""}
-              <span className="capitalize">{effectiveRole}</span>
-            </p>
-          </div>
+          {!compact && (
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white truncate" title={displayEmail || displayName}>
+                {displayName}
+              </p>
+              <p className="text-xs text-slate-400 truncate" title={displayEmail}>
+                {displayEmail ? `${displayEmail} • ` : ""}
+                <span className="capitalize">{effectiveRole}</span>
+              </p>
+            </div>
+          )}
         </div>
 
         <Button
           onClick={() => setShowLogoutConfirm(true)}
           variant="ghost"
-          className="w-full justify-start text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer"
+          title={compact ? "Logout" : undefined}
+          className={cn(
+            "w-full text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer",
+            compact ? "justify-center px-2" : "justify-start"
+          )}
         >
-          <LogOut className="h-4 w-4 mr-3" />
-          Logout
+          <LogOut className={cn("h-4 w-4 shrink-0", !compact && "mr-3")} />
+          {!compact && "Logout"}
         </Button>
       </div>
     </>
@@ -139,20 +247,28 @@ export function Sidebar({ userRole = "viewer" }: SidebarProps) {
         <Menu className="h-6 w-6" />
       </Button>
 
-      {/* Mobile Sidebar */}
+      {/* Mobile Sidebar (always expanded inside drawer) */}
       {isMobileOpen && (
         <div className="lg:hidden fixed inset-0 z-40">
           <div className="absolute inset-0 bg-black/50" onClick={() => setIsMobileOpen(false)} />
           <aside className="absolute left-0 top-0 bottom-0 w-72 bg-slate-900 border-r border-slate-700 flex flex-col">
-            <SidebarContent />
+            <SidebarContent compact={false} />
           </aside>
         </div>
       )}
 
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex flex-col w-72 bg-slate-900 border-r border-slate-700 fixed left-0 top-0 bottom-0">
-        <SidebarContent />
+      <aside
+        className={cn(
+          "hidden lg:flex flex-col bg-slate-900 border-r border-slate-700 fixed left-0 top-0 bottom-0 z-30 transition-all duration-300",
+          isCollapsed ? "w-20" : "w-72"
+        )}
+      >
+        <SidebarContent compact={isCollapsed} />
       </aside>
+
+      {/* Customer QR Modal */}
+      <CustomerQrModal open={showQrModal} onClose={() => setShowQrModal(false)} />
 
       {/* Logout Confirmation Modal */}
       <AlertDialog open={showLogoutConfirm} onOpenChange={setShowLogoutConfirm}>

@@ -1,10 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Flame, Play, Pause, RotateCcw } from "lucide-react";
+import { Play, Pause, RotateCcw } from "lucide-react";
 
 /**
- * Floor-plan coordinates are NORMALIZED: x and y are 0..1,
- * (0,0) = top-left of the store, (1,1) = bottom-right (entrance is at the bottom).
- * The backend produces them from: foot point of the person's bounding box -> homography.
+- Floor-plan coordinates are NORMALIZED: x and y are 0..1,
+- (0,0) = top-left of the store, (1,1) = bottom-right (entrance is at the bottom).
+- The backend produces them from: foot point of the person's bounding box -> homography.
  */
 export interface HeatPoint {
   x: number;
@@ -12,8 +12,6 @@ export interface HeatPoint {
   camera_id?: string;
   track_id?: number;
 }
-
-type Mode = "live" | "cumulative";
 
 interface StoreHeatmapProps {
   /** Endpoint returning { points: HeatPoint[] } with normalized coords */
@@ -30,7 +28,7 @@ const RADIUS = 4.5; // splat radius in grid cells (~ person's footprint + spread
 const COUNTS_PER_UNIT = 1; // heat added per detection at the center of the splat
 
 // Live mode keeps a trail that fades slowly (applied once per poll, NOT per frame).
-// 0.998 at 500ms polling ≈ 3-minute half-life. Accumulated mode never decays.
+// 0.998 at 500ms polling ≈ 3-minute half-life.
 const TRAIL_DECAY = 0.998;
 // Heat needed before a spot reads as "hot" (red). Raise it if the map turns red too fast.
 // A single pass stays blue because the color scale never goes below this value.
@@ -79,7 +77,7 @@ function ramp(t: number): [number, number, number, number] {
 }
 
 export function StoreHeatmap({
-  endpoint = "http://127.0.0.1:8001/api/heatmap_points",
+  endpoint = "/streamer/api/heatmap_points",
   pollMs = 500,
   demoMode = false,
 }: StoreHeatmapProps) {
@@ -88,21 +86,16 @@ export function StoreHeatmap({
   const offRef = useRef<HTMLCanvasElement | null>(null);
   const walkersRef = useRef<{ x: number; y: number; tx: number; ty: number }[]>([]);
 
-  const [mode, setMode] = useState<Mode>("live");
   const [paused, setPaused] = useState(false);
   const [peopleNow, setPeopleNow] = useState(0);
   const [connected, setConnected] = useState<boolean>(demoMode);
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
 
   // ---- add points to the grid as Gaussian splats ----
   const addPoints = (points: HeatPoint[]) => {
     const g = gridRef.current;
 
-    // Slow trail fade, once per poll (live mode only)
-    if (modeRef.current === "live") {
-      for (let i = 0; i < g.length; i++) g[i] *= TRAIL_DECAY;
-    }
+    // Slow trail fade, once per poll
+    for (let i = 0; i < g.length; i++) g[i] *= TRAIL_DECAY;
 
     for (const p of points) {
       if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) continue;
@@ -242,71 +235,48 @@ export function StoreHeatmap({
   const reset = () => gridRef.current.fill(0);
 
   return (
-    <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-800 space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <Flame className="w-5 h-5 text-orange-500" />
-            <h2 className="text-xl font-bold text-white">Store Heatmap</h2>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Where customers actually stand and walk, detected by the cameras
-            {demoMode && " (demo simulation)"}
-          </p>
-        </div>
+    <div className="relative w-full">
+      <canvas
+        ref={canvasRef}
+        width={960}
+        height={640}
+        className="w-full block rounded-xl border border-slate-800 bg-slate-950"
+      />
 
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border border-slate-700 overflow-hidden text-xs font-semibold">
-            {(["live", "cumulative"] as Mode[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                className={`px-3 py-2 transition-colors ${
-                  mode === m ? "bg-blue-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                }`}
-              >
-                {m === "live" ? "Live (recent)" : "Accumulated"}
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={() => setPaused((p) => !p)}
-            className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700"
-            title={paused ? "Resume" : "Pause"}
-          >
-            {paused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-          </button>
-          <button
-            onClick={reset}
-            className="p-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700"
-            title="Clear heatmap"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-        </div>
+      {/* Top-left live detection badge */}
+      <div className="absolute top-3 left-3 flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-mono">
+        <span className={`w-2 h-2 rounded-full ${connected ? "bg-emerald-400 animate-pulse" : "bg-red-500"}`} />
+        <span className="text-slate-300">
+          {connected ? `${peopleNow} people detected` : "Waiting for tracking data..."}
+        </span>
       </div>
 
-      <div className="relative">
-        <canvas
-          ref={canvasRef}
-          width={960}
-          height={640}
-          className="w-full rounded-xl border border-slate-800 bg-slate-950"
+      {/* Top-right pause & reset controls */}
+      <div className="absolute top-3 right-3 flex items-center gap-1.5">
+        <button
+          onClick={() => setPaused((p) => !p)}
+          className="p-2 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+          title={paused ? "Resume heatmap" : "Pause heatmap"}
+        >
+          {paused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
+        </button>
+        <button
+          onClick={reset}
+          className="p-2 rounded-lg bg-slate-950/80 border border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+          title="Clear heatmap"
+        >
+          <RotateCcw className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Bottom-right color legend */}
+      <div className="absolute bottom-3 right-3 flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-1.5 text-[10px] font-mono text-slate-400">
+        Rare
+        <span
+          className="inline-block w-24 h-2 rounded"
+          style={{ background: "linear-gradient(to right,#2B83BA,#41B6C4,#A6D96A,#FDAE61,#D7191C)" }}
         />
-        <div className="absolute top-3 left-3 flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-1.5 text-[11px] font-mono">
-          <span className={`w-2 h-2 rounded-full ${connected ? "bg-emerald-400 animate-pulse" : "bg-red-500"}`} />
-          <span className="text-slate-300">
-            {connected ? `${peopleNow} people detected` : "Waiting for tracking data..."}
-          </span>
-        </div>
-        <div className="absolute bottom-3 right-3 flex items-center gap-2 bg-slate-950/80 border border-slate-800 rounded-lg px-3 py-1.5 text-[10px] font-mono text-slate-400">
-          Rare
-          <span
-            className="inline-block w-24 h-2 rounded"
-            style={{ background: "linear-gradient(to right,#2B83BA,#41B6C4,#A6D96A,#FDAE61,#D7191C)" }}
-          />
-          Frequent
-        </div>
+        Frequent
       </div>
     </div>
   );

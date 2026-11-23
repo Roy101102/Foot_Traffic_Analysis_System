@@ -10,6 +10,7 @@ import SettingsPage from "./pages/SettingsPage";
 import LoginPage from "./pages/LoginPage";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
+import { StoreStatusPage } from "./pages/StoreStatusPage";
 
 async function redirectIfAuthenticated() {
   const user = await checkAuth();
@@ -49,6 +50,10 @@ export const router = createBrowserRouter([
     path: "/reset-password",
     element: <ResetPasswordPage />,
     loader: redirectIfAuthenticated,
+  },
+  {
+    path: "/store-status",
+    element: <StoreStatusPage />,
   },
   {
     path: "/",

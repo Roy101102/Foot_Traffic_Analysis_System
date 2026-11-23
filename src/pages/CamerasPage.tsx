@@ -29,7 +29,21 @@ interface CameraItem {
   streamUrl?: string;
 }
 
-const STREAMER_API_BASE = "http://127.0.0.1:8001/api";
+const STREAMER_API_BASE = "/streamer/api";
+
+const normalizeStreamUrl = (rawUrl: string | undefined, camId: string) => {
+  const url = rawUrl || `${STREAMER_API_BASE}/video_feed/${camId}`;
+  if (url.startsWith("http://127.0.0.1:8001")) {
+    return url.replace("http://127.0.0.1:8001", "/streamer");
+  }
+  if (url.startsWith("http://localhost:8001")) {
+    return url.replace("http://localhost:8001", "/streamer");
+  }
+  if (url.startsWith("/") && !url.startsWith("/streamer")) {
+    return `/streamer${url}`;
+  }
+  return url;
+};
 
 export default function CamerasPage() {
   const { liveTraffic } = useDashboard();
@@ -72,7 +86,7 @@ export default function CamerasPage() {
 
   const [isLoading, setIsLoading] = useState(false);
 
-  // Initial fetch from traffic_counter backend (Port 8001)
+  // Fetch cameras via Vite's /streamer proxy -> Port 8001
   const fetchBackendCameras = async () => {
     try {
       setIsLoading(true);
@@ -81,26 +95,29 @@ export default function CamerasPage() {
         const backendCams = await res.json();
         if (Array.isArray(backendCams) && backendCams.length > 0) {
           setCameras(
-            backendCams.map((b: any) => ({
-              id: b.id || b.camera_id,
-              name: b.name,
-              location: `Zone: ${b.name}`,
-              liveCount: b.liveCount ?? 0,
-              entryCount: b.entryCount ?? 0,
-              exitCount: b.exitCount ?? 0,
-              isOnline: b.isOnline ?? true,
-              isStreaming: b.isStreaming ?? true,
-              ip: b.ip,
-              user: b.user || "admin",
-              channel: b.channel || "102",
-              lineY: b.lineY ?? b.line_y ?? 300,
-              streamUrl: b.streamUrl || `${STREAMER_API_BASE}/video_feed/${b.id || b.camera_id}`,
-            }))
+            backendCams.map((b: any) => {
+              const camId = b.id || b.camera_id;
+              return {
+                id: camId,
+                name: b.name,
+                location: b.ip ? `${b.ip} · ${b.name}` : `Zone: ${b.name}`,
+                liveCount: b.peopleDetected ?? b.liveCount ?? 0,
+                entryCount: b.entryCount ?? 0,
+                exitCount: b.exitCount ?? 0,
+                isOnline: b.isOnline ?? true,
+                isStreaming: b.isStreaming ?? true,
+                ip: b.ip || "",
+                user: b.user || "admin",
+                channel: b.channel || "102",
+                lineY: b.lineY ?? b.line_y ?? 300,
+                streamUrl: normalizeStreamUrl(b.streamUrl, camId),
+              };
+            })
           );
         }
       }
     } catch (err) {
-      console.warn("Could not reach streaming backend directly at 8001. Using fallback local state.", err);
+      console.warn("Could not reach streaming backend via /streamer proxy.", err);
     } finally {
       setIsLoading(false);
     }
@@ -127,7 +144,7 @@ export default function CamerasPage() {
             liveCount: matchedBackend.liveCount ?? matchedBackend.detected ?? cam.liveCount,
             entryCount: matchedBackend.entryCount ?? matchedBackend.entries ?? cam.entryCount,
             exitCount: matchedBackend.exitCount ?? matchedBackend.exits ?? cam.exitCount,
-            streamUrl: matchedBackend.streamUrl || `${STREAMER_API_BASE}/video_feed/${cam.id}`,
+            streamUrl: normalizeStreamUrl(matchedBackend.streamUrl, cam.id),
           };
         }
         return cam;
@@ -200,8 +217,9 @@ export default function CamerasPage() {
       }
 
       const addedCam = await response.json();
+      const resolvedId = addedCam.id || newId;
       const newCamItem: CameraItem = {
-        id: addedCam.id || newId,
+        id: resolvedId,
         name: addedCam.name || camName.trim(),
         location: `Zone: ${camName.trim()}`,
         liveCount: 0,
@@ -214,7 +232,7 @@ export default function CamerasPage() {
         pass: camPass,
         channel: camChannel,
         lineY: Number(camLineY) || 300,
-        streamUrl: `${STREAMER_API_BASE}/video_feed/${addedCam.id || newId}`,
+        streamUrl: `${STREAMER_API_BASE}/video_feed/${resolvedId}`,
       };
 
       setCameras((prev) => [...prev, newCamItem]);
@@ -299,7 +317,6 @@ export default function CamerasPage() {
                 </div>
               )}
 
-              {/* Camera Name */}
               <div className="space-y-1">
                 <label className="text-slate-300 font-medium">Camera / Zone Label</label>
                 <Input
@@ -310,7 +327,6 @@ export default function CamerasPage() {
                 />
               </div>
 
-              {/* IP Address & Channel */}
               <div className="grid grid-cols-3 gap-2">
                 <div className="col-span-2 space-y-1">
                   <label className="text-slate-300 font-medium">Camera IP Address</label>
@@ -332,7 +348,6 @@ export default function CamerasPage() {
                 </div>
               </div>
 
-              {/* RTSP Credentials */}
               <div className="grid grid-cols-2 gap-2">
                 <div className="space-y-1">
                   <label className="text-slate-300 font-medium">RTSP Username</label>
@@ -369,7 +384,6 @@ export default function CamerasPage() {
                 </div>
               </div>
 
-              {/* Counting Line Y Offset */}
               <div className="space-y-1 bg-slate-950 p-3 rounded-lg border border-slate-800">
                 <div className="flex justify-between items-center mb-1">
                   <label className="text-slate-300 font-medium flex items-center gap-1.5">
@@ -421,7 +435,9 @@ export default function CamerasPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Live Camera Streams</h1>
-          <p className="text-xs text-slate-400 mt-0.5">Real-time YOLOv8 object tracking and foot traffic monitoring</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Real-time YOLOv8 object tracking and foot traffic monitoring
+          </p>
         </div>
         <div className="flex gap-2">
           <Button

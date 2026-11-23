@@ -33,6 +33,7 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
+    allow_origin_regex=r"https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -275,6 +276,64 @@ async def post_traffic_event(event: TrafficEvent):
 @app.get("/api/dashboard-stats")
 async def get_dashboard_stats():
     return fetch_dashboard_stats()
+
+
+@app.get("/api/public/store-status")
+async def get_public_store_status():
+    """Public, read-only crowd status and aisle availability for customer phones/kiosks."""
+    live_zone_counts = {"cam_1": 0, "cam_2": 0, "cam_3": 0}
+    try:
+        cam_res = requests.get(f"{STREAM_SERVER_URL}/api/cameras", timeout=0.8)
+        if cam_res.status_code == 200:
+            for cam in cam_res.json():
+                cid = cam.get("camera_id") or cam.get("id")
+                if cid in live_zone_counts:
+                    count = cam.get("peopleDetected", cam.get("detected", cam.get("liveCount", 0)))
+                    live_zone_counts[cid] = int(count or 0)
+    except Exception:
+        pass
+
+    stats = fetch_dashboard_stats()
+    summary = stats.get("summary", {})
+    occupancy = int(summary.get("current_occupancy", 0))
+
+    if occupancy <= 5:
+        crowd_level = "Quiet"
+    elif occupancy <= 15:
+        crowd_level = "Moderate"
+    else:
+        crowd_level = "Busy"
+
+    formatted_trends = [
+        {
+            "hour": f"{int(item['hour']):02d}:00",
+            "entries": int(item.get("entries", 0)),
+        }
+        for item in stats.get("hourly_trends", [])
+    ]
+
+    return {
+        "storeName": "MR. DIY",
+        "crowdLevel": crowd_level,
+        "currentOccupancy": occupancy,
+        "aisles": [
+            {
+                "id": "zone_2",
+                "name": "Hardware & Tools Aisle",
+                "shelves": ["Hardware", "Tools", "Paint"],
+                "peopleNow": live_zone_counts["cam_2"],
+                "status": "Busy" if live_zone_counts["cam_2"] >= 4 else "Available",
+            },
+            {
+                "id": "zone_3",
+                "name": "Household & Electrical Aisle",
+                "shelves": ["Household", "Electrical", "Storage"],
+                "peopleNow": live_zone_counts["cam_3"],
+                "status": "Busy" if live_zone_counts["cam_3"] >= 4 else "Available",
+            },
+        ],
+        "hourlyTrends": formatted_trends,
+    }
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import { HeatmapChart } from "../components/HeatmapChart";
 import { CameraCard } from "../components/CameraCard";
 import { ConversionCard } from "../components/ConversionCard";
 import { StoreHeatmap } from "../components/StoreHeatmap";
+import { HistoricalHeatmap } from "../components/HistoricalHeatmap";
 import {
   Users,
   ShoppingBag,
@@ -21,6 +22,8 @@ import {
   LogIn,
   Maximize2,
   Minimize2,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { useDashboard } from "../context/DashboardContext";
 
@@ -42,10 +45,10 @@ const computeTrafficLevel = (peopleNow: number): TrafficLevel => {
   return "Low Activity";
 };
 
-// Camera #1 (192.168.1.51) is the entrance gate, not an aisle zone
+// Camera #1 is the entrance gate, not an aisle zone
 const isEntranceCam = (cam: any) =>
   cam?.id === "cam_1" ||
-  String(cam?.ip || "").trim() === "192.168.1.51" ||
+  String(cam?.ip || "").trim() === "172.16.32.97" ||
   String(cam?.name || "").toLowerCase().includes("entrance");
 
 const getTrafficBadgeStyle = (level: TrafficLevel) => {
@@ -58,6 +61,14 @@ const getTrafficBadgeStyle = (level: TrafficLevel) => {
     default:
       return "bg-emerald-500/20 text-emerald-400 border-emerald-500/40";
   }
+};
+
+// Route MJPEG stream URLs through Vite's /streamer proxy so they work over HTTPS tunnels
+const normalizeStreamUrl = (rawUrl: string | undefined, camId: string) => {
+  if (!rawUrl || rawUrl.startsWith("/streamer/") || rawUrl.startsWith("/api/")) {
+    return `http://127.0.0.1:8001/api/video_feed/${camId}`;
+  }
+  return rawUrl;
 };
 
 export default function DashboardPage() {
@@ -74,6 +85,12 @@ export default function DashboardPage() {
 
   // Heatmap demo toggle (simulated people, useful when cameras aren't available)
   const [heatmapDemo, setHeatmapDemo] = useState<boolean>(false);
+
+  // Live (right now) or History (any saved day / week / month / specific days)
+  const [heatmapView, setHeatmapView] = useState<"live" | "history">("live");
+
+  // Collapsible state for Active Store Zones under the floor plan
+  const [isZonesCollapsed, setIsZonesCollapsed] = useState<boolean>(false);
 
   // Expanded camera state for the Camera Monitoring section
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
@@ -94,14 +111,14 @@ export default function DashboardPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // FETCH REAL-TIME CAMERA STREAMS DIRECTLY FROM STREAMING SERVER (PORT 8001)
+  // FETCH REAL-TIME CAMERA STREAMS VIA VITE PROXY (/streamer -> PORT 8001)
   const [streamBackendCameras, setStreamBackendCameras] = useState<any[]>([]);
 
   useEffect(() => {
     let isMounted = true;
     const fetchBackendCameras = async () => {
       try {
-        const res = await fetch("http://127.0.0.1:8001/api/cameras");
+        const res = await fetch("/streamer/api/cameras");
         if (res.ok) {
           const data = await res.json();
           if (isMounted && Array.isArray(data)) {
@@ -109,7 +126,7 @@ export default function DashboardPage() {
           }
         }
       } catch (err) {
-        console.warn("Could not fetch cameras from Port 8001 backend", err);
+        console.warn("Could not fetch cameras from streaming server", err);
       }
     };
 
@@ -141,7 +158,7 @@ export default function DashboardPage() {
           exitCount: matchedTraffic?.exits ?? matchedTraffic?.exitCount ?? sCam.exitCount ?? sCam.exit_count ?? 0,
           liveCount: sCam.peopleDetected ?? sCam.liveCount ?? sCam.live_count ?? 0,
           peopleNow: sCam.peopleDetected ?? 0, // people currently visible (from the heatmap tracker)
-          streamUrl: sCam.streamUrl || `http://127.0.0.1:8001/api/video_feed/${camId}`,
+          streamUrl: normalizeStreamUrl(sCam.streamUrl, camId),
         };
       });
     }
@@ -156,7 +173,7 @@ export default function DashboardPage() {
         exitCount: cam.exitCount ?? cam.exit_count ?? cam.exits ?? 0,
         liveCount: cam.liveCount ?? cam.live_count ?? 0,
         peopleNow: 0,
-        streamUrl: cam.streamUrl || `http://127.0.0.1:8001/api/video_feed/${cam.id}`,
+        streamUrl: normalizeStreamUrl(cam.streamUrl, cam.id),
       })) ?? []
     );
   }, [streamBackendCameras, liveTraffic?.cameras]);
@@ -703,7 +720,7 @@ export default function DashboardPage() {
       </div>
 
       {/* LIVE IN-STORE HEATMAP (camera-based, positions of people on the floor plan) */}
-      <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-800 space-y-4">
+      <div className="bg-slate-900/60 p-6 rounded-2xl border border-slate-800 space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
           <div>
             <div className="flex items-center gap-2">
@@ -711,20 +728,45 @@ export default function DashboardPage() {
               <h2 className="text-xl font-bold text-white">Live In-Store Heatmap</h2>
             </div>
             <p className="text-xs text-slate-400 mt-1">
-              Built from where the cameras detect customers standing and walking ({activeSections.length} active aisle zones)
+              {heatmapView === "live"
+                ? `Built from where the cameras detect customers standing and walking (${activeSections.length} active aisle zones)`
+                : "Saved history of where customers spent time. Pick a day, week, month or specific days."}
             </p>
           </div>
 
           <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={heatmapDemo}
-                onChange={(e) => setHeatmapDemo(e.target.checked)}
-                className="accent-blue-500"
-              />
-              Demo simulation
-            </label>
+            <div className="flex rounded-lg border border-slate-700 overflow-hidden text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setHeatmapView("live")}
+                className={`px-3 py-2 transition-colors ${
+                  heatmapView === "live" ? "bg-blue-600 text-white" : "bg-slate-900 text-slate-300 hover:bg-slate-800"
+                }`}
+              >
+                Live
+              </button>
+              <button
+                type="button"
+                onClick={() => setHeatmapView("history")}
+                className={`px-3 py-2 transition-colors ${
+                  heatmapView === "history" ? "bg-blue-600 text-white" : "bg-slate-900 text-slate-300 hover:bg-slate-800"
+                }`}
+              >
+                History
+              </button>
+            </div>
+
+            {heatmapView === "live" && (
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={heatmapDemo}
+                  onChange={(e) => setHeatmapDemo(e.target.checked)}
+                  className="accent-blue-500"
+                />
+                Demo simulation
+              </label>
+            )}
             <button
               onClick={() => setIsAddSectionOpen(true)}
               className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg transition-all shadow-lg shadow-blue-600/20"
@@ -734,114 +776,142 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          {/* THE HEATMAP */}
-          <div className="lg:col-span-2">
+        {/* FULL-WIDTH STRETCHED FLOOR PLAN */}
+        <div className="w-full">
+          {heatmapView === "live" ? (
             <StoreHeatmap demoMode={heatmapDemo} />
-          </div>
+          ) : (
+            <HistoricalHeatmap cameras={cameras} />
+          )}
+        </div>
 
-          {/* ACTIVE ZONES SIDEBAR */}
-          <div className="lg:col-span-1 flex flex-col gap-4">
-            <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex flex-col">
-              <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between pb-2 border-b border-slate-800 shrink-0">
+        {/* COLLAPSIBLE ACTIVE ZONES & ENTRANCE GATE UNDER FLOOR PLAN */}
+        <div className="space-y-4">
+          <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 flex flex-col">
+            <button
+              type="button"
+              onClick={() => setIsZonesCollapsed((prev) => !prev)}
+              aria-expanded={!isZonesCollapsed}
+              className={`w-full text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center justify-between cursor-pointer hover:text-white transition-colors ${
+                isZonesCollapsed ? "" : "pb-3 border-b border-slate-800"
+              }`}
+            >
+              <span className="flex items-center gap-2">
                 <span>Active Store Zones</span>
-                <span className="text-blue-400">{activeSections.length} Zones</span>
-              </h3>
+                {isZonesCollapsed && (
+                  <span className="text-[11px] font-mono font-normal normal-case text-slate-400">
+                    ({aislePeopleTotal} in view across aisles)
+                  </span>
+                )}
+              </span>
 
-              <div className="space-y-2.5 max-h-[420px] overflow-y-auto pr-1 pt-2">
-                {activeSections.length === 0 && (
+              <span className="flex items-center gap-2 text-blue-400">
+                <span>{activeSections.length} Zones</span>
+                {isZonesCollapsed ? (
+                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                ) : (
+                  <ChevronUp className="w-4 h-4 text-slate-400" />
+                )}
+              </span>
+            </button>
+
+            {!isZonesCollapsed && (
+              <>
+                {activeSections.length === 0 ? (
                   <p className="text-[11px] text-slate-500 font-mono py-4 text-center">
                     No aisle cameras online yet.
                   </p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 pt-3">
+                    {activeSections.map((sec) => {
+                      const metrics = getZoneMetrics(sec.cameraId);
+                      const badge = getTrafficBadgeStyle(metrics.level);
+                      const isSelected = expandedCameraId === sec.cameraId;
+
+                      return (
+                        <div
+                          key={sec.id}
+                          onClick={() => handleSelectZoneCamera(sec.cameraId, true)}
+                          title="Click to expand live camera feed"
+                          className={`bg-slate-900/80 p-3.5 rounded-xl border space-y-2.5 transition-all relative cursor-pointer ${
+                            isSelected
+                              ? "border-blue-500 ring-1 ring-blue-500/40 bg-slate-900"
+                              : "border-slate-800/80 hover:border-blue-500/50"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                                <span>{sec.section}</span>
+                              </h4>
+                              <p className="text-[10px] text-slate-400 font-mono">
+                                {metrics.cam?.name ? `${sec.cameraId} · ${metrics.cam.ip ?? ""}` : sec.cameraId}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <span className="text-slate-400 hover:text-blue-400 p-1">
+                                <Maximize2 className="w-3.5 h-3.5" />
+                              </span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSectionToDelete(sec);
+                                }}
+                                title="Delete Section"
+                                className="text-slate-500 hover:text-red-400 p-1 rounded hover:bg-red-500/10 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px] font-mono pt-1">
+                            <span className="text-slate-300 flex items-center gap-1">
+                              <Users className="w-3.5 h-3.5 text-blue-400" />
+                              <strong className="text-white">{metrics.peopleNow}</strong> in view now
+                            </span>
+                            <span className="text-[10px] text-blue-400">Expand feed →</span>
+                          </div>
+
+                          <div className="flex justify-between items-center text-[10px] font-mono pt-1.5 border-t border-slate-800">
+                            <span className={`px-2 py-0.5 rounded border ${badge}`}>{metrics.level}</span>
+                            <span className="font-bold text-slate-300">{metrics.share}% of aisle traffic</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
+              </>
+            )}
+          </div>
 
-                {activeSections.map((sec) => {
-                  const metrics = getZoneMetrics(sec.cameraId);
-                  const badge = getTrafficBadgeStyle(metrics.level);
-                  const isSelected = expandedCameraId === sec.cameraId;
-
-                  return (
-                    <div
-                      key={sec.id}
-                      onClick={() => handleSelectZoneCamera(sec.cameraId, true)}
-                      title="Click to expand live camera feed"
-                      className={`bg-slate-900/80 p-3.5 rounded-xl border space-y-2.5 transition-all relative cursor-pointer ${
-                        isSelected
-                          ? "border-blue-500 ring-1 ring-blue-500/40 bg-slate-900"
-                          : "border-slate-800/80 hover:border-blue-500/50"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                            <span>{sec.section}</span>
-                          </h4>
-                          <p className="text-[10px] text-slate-400 font-mono">
-                            {metrics.cam?.name ? `${sec.cameraId} · ${metrics.cam.ip ?? ""}` : sec.cameraId}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center gap-1">
-                          <span className="text-slate-400 hover:text-blue-400 p-1">
-                            <Maximize2 className="w-3.5 h-3.5" />
-                          </span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSectionToDelete(sec);
-                            }}
-                            title="Delete Section"
-                            className="text-slate-500 hover:text-red-400 p-1 rounded hover:bg-red-500/10 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[11px] font-mono pt-1">
-                        <span className="text-slate-300 flex items-center gap-1">
-                          <Users className="w-3.5 h-3.5 text-blue-400" />
-                          <strong className="text-white">{metrics.peopleNow}</strong> in view now
-                        </span>
-                        <span className="text-[10px] text-blue-400">Expand feed →</span>
-                      </div>
-
-                      <div className="flex justify-between items-center text-[10px] font-mono pt-1.5 border-t border-slate-800">
-                        <span className={`px-2 py-0.5 rounded border ${badge}`}>{metrics.level}</span>
-                        <span className="font-bold text-slate-300">{metrics.share}% of aisle traffic</span>
-                      </div>
-                    </div>
-                  );
-                })}
+          {/* ENTRANCE GATE SUMMARY */}
+          <div
+            onClick={() => entranceCamera && handleSelectZoneCamera(entranceCamera.id, true)}
+            title={entranceCamera ? "Click to expand entrance live camera feed" : undefined}
+            className={`bg-slate-950 p-4 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
+              entranceCamera ? "cursor-pointer hover:border-blue-500/50" : ""
+            } ${
+              entranceCamera && expandedCameraId === entranceCamera.id
+                ? "border-blue-500 ring-1 ring-blue-500/40"
+                : "border-slate-800"
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+                <LogIn className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-white">Zone 1: Main Entrance Gate</h4>
+                <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                  Entered: <span className="text-blue-400 font-bold">{totalEntries}</span> | In-store:{" "}
+                  <span className="text-emerald-400 font-bold">{occupancy}</span>
+                </p>
               </div>
             </div>
-
-            {/* ENTRANCE GATE SUMMARY */}
-            <div
-              onClick={() => entranceCamera && handleSelectZoneCamera(entranceCamera.id, true)}
-              title={entranceCamera ? "Click to expand entrance live camera feed" : undefined}
-              className={`bg-slate-950 p-4 rounded-2xl border flex items-center justify-between gap-3 transition-all ${
-                entranceCamera ? "cursor-pointer hover:border-blue-500/50" : ""
-              } ${
-                entranceCamera && expandedCameraId === entranceCamera.id
-                  ? "border-blue-500 ring-1 ring-blue-500/40"
-                  : "border-slate-800"
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
-                  <LogIn className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-white">Zone 1: Main Entrance Gate</h4>
-                  <p className="text-[10px] text-slate-400 font-mono mt-0.5">
-                    Entered: <span className="text-blue-400 font-bold">{totalEntries}</span> | In-store:{" "}
-                    <span className="text-emerald-400 font-bold">{occupancy}</span>
-                  </p>
-                </div>
-              </div>
-              {entranceCamera && <Maximize2 className="w-4 h-4 text-slate-400 shrink-0" />}
-            </div>
+            {entranceCamera && <Maximize2 className="w-4 h-4 text-slate-400 shrink-0" />}
           </div>
         </div>
       </div>

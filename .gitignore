@@ -1,17 +1,18 @@
-# Dependencies & Builds
+# Dependencies & build output
 node_modules/
 dist/
 
-# Python Cache & Virtual Environments
+# Python cache & environments
 __pycache__/
 *.py[cod]
-*$py.class
 venv/
 .venv/
 
-# Environment & Secrets
+# Environment secrets
 .env
 .env.local
 
-# Local Video Files
-*.mp4
+# Optional Cloudflare Tunnel binaries & credentials
+cloudflared.exe
+.cloudflared/
+cert.pemg
